@@ -1,0 +1,74 @@
+RECOVERYDESK V2 — RELEASE NOTES
+
+Brand
+- Uses the supplied WISCODE green geometric logo throughout the app and PWA icons.
+- Light, Dark, and Follow-device modes.
+- Intentional SVG iconography and semantic status colors.
+- Green shades represent forward progress; amber/red signal attention or blocked work.
+
+Identity & access
+- Existing Firebase Admin account remains compatible.
+- Email/password and Google sign-in.
+- New Staff can create a sign-in and request access.
+- Admin approves Staff and assigns Admin / Worker / Finance role and job title.
+- Staff may change their display name; real name remains underneath and Admin-controlled.
+- Staff/Admin can approve customer portal access.
+- Customers cannot edit their registered customer name.
+
+Customers, jobs & devices
+- Permanent Customer IDs: CUS-YYYY-####.
+- Permanent Device IDs: DEV-YYYY-####.
+- Job IDs: DR-YYYY-####.
+- Returning customers and returning devices keep their history.
+- One job can contain multiple devices.
+- Separate device owner, submitter, relationship, signer, and signer authority.
+- Legacy V1 single-device jobs can be migrated from Settings without deleting the original job ID.
+
+Intake controls
+- Worker confirms assessment payment and physical authorization/signature.
+- Standard payment methods include Moniepoint Transfer, POS, Cash, Bank Transfer, Other.
+- Job remains Intake Pending until required checkpoints are satisfied.
+- Intake photos can be made required later, after Storage is configured.
+
+Recovery workflow
+- Intake Pending
+- Ready for Assessment
+- Assessment
+- Awaiting Approval
+- Recovery In Progress
+- Ready for Collection
+- Completed / Closed / Blocked
+- Customer portal can approve a recovery quote.
+- Staff can confirm local/offline quote approval on behalf of a customer interaction.
+
+Tasks
+- Per-worker tasks with due date and priority.
+- Overdue / Due Today / Upcoming / Completed sections.
+- Job-linked tasks.
+- In-app reminders only in V2; automatic background push notifications are intentionally deferred.
+
+Finance
+- Assessment fees, recovery payments, deposits, refunds, discounts, expenses, balances, and outstanding amounts.
+- Daily, monthly, and all-time operational summaries.
+- Worker can record/confirm job payments.
+- Finance/Admin gets company-wide operational finance view.
+- RecoveryDesk is an operational finance tracker, not a replacement for formal accounting software.
+
+Documents
+- Branded Invoice numbers: INV-YYYY-####.
+- Branded Receipt numbers: RCT-YYYY-####.
+- Branded Agreement numbers: AGR-YYYY-####.
+- Print / Save as PDF from the browser.
+- WISCODE INNOVATIONS LTD and RC 9656932 included.
+- Agreement records device owner, submitter, signer, devices, fees, risk acknowledgement, confidentiality, and signatures.
+
+Files & evidence
+- UI supports device intake/condition photos.
+- UI supports image/PDF upload of exact signed paperwork.
+- Signed copies can be marked client-visible.
+- Images larger than ~900 KB are compressed in the browser, with an iOS/Safari-compatible fallback.
+- Recovered customer files/data are NOT intended to be uploaded to RecoveryDesk.
+- File upload activates only after Blaze + default Firestore + Firebase Storage are configured and the included rules are published.
+
+Audit
+- V2 records key actions such as customer creation, device registration, job creation/migration, payment confirmation, staff approval, document generation, uploads, task completion, and settings changes.

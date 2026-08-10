@@ -1,0 +1,51 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function bootstrapAdmin() {
+      return signedIn() && request.auth.uid == "NkBCSA8109gLUz0lwrlvVU2Q02H3";
+    }
+
+    function staffAccessExists() {
+      return signedIn() &&
+        firestore.exists(/databases/(default)/documents/access/$(request.auth.uid));
+    }
+
+    function isStaff() {
+      return bootstrapAdmin() ||
+        (staffAccessExists() &&
+         firestore.get(/databases/(default)/documents/access/$(request.auth.uid)).data.active == true &&
+         firestore.get(/databases/(default)/documents/access/$(request.auth.uid)).data.role in ["admin", "worker", "finance"]);
+    }
+
+    function isOps() {
+      return bootstrapAdmin() ||
+        (staffAccessExists() &&
+         firestore.get(/databases/(default)/documents/access/$(request.auth.uid)).data.active == true &&
+         firestore.get(/databases/(default)/documents/access/$(request.auth.uid)).data.role in ["admin", "worker"]);
+    }
+
+    function isClientFor(customerId) {
+      return signedIn() &&
+        firestore.exists(/databases/(default)/documents/customerAccess/$(request.auth.uid)) &&
+        firestore.get(/databases/(default)/documents/customerAccess/$(request.auth.uid)).data.customerId == customerId;
+    }
+
+    match /jobs/{customerId}/{jobId}/{allPaths=**} {
+      allow read: if isStaff() ||
+        (isClientFor(customerId) && resource.metadata.clientVisible == "true");
+
+      allow create, update: if isOps()
+        && request.resource.size < 8 * 1024 * 1024
+        && (
+          request.resource.contentType.matches("image/.*") ||
+          request.resource.contentType == "application/pdf"
+        );
+
+      allow delete: if isOps();
+    }
+  }
+}

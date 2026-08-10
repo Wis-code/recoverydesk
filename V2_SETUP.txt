@@ -1,0 +1,24 @@
+RECOVERYDESK V2 — TECHNICAL NOTES
+
+Firebase project: wiscodery-forensic
+Main data: Firebase Realtime Database
+Web hosting: existing GitHub Pages repository
+Authentication: existing Firebase Email/Password + Google
+Files: Firebase Storage after later Blaze setup
+Storage authorization mirror: default Cloud Firestore database
+
+Why there are two databases in V2:
+- Realtime Database remains the application's source of truth for customers, jobs, devices, tasks, finance, documents, staff requests and audit records.
+- Firestore is used only as a tiny access-control mirror for Cloud Storage Security Rules.
+
+Existing V1 data:
+- V2 does not automatically delete or overwrite old jobs.
+- Admin Settings includes a Legacy V1 migration action.
+- Migration preserves the old job ID and creates customer/device links around it.
+
+Storage behavior before Blaze:
+- New intake, customers, multiple devices, tasks, finance and generated documents work without Firebase Storage.
+- Photo/signed-document upload attempts will show a setup message until Storage is available.
+- Keep physical signed paperwork as usual until upload has been configured and tested.
+
+See DEPLOYMENT_CHECKLIST.txt for the deployment order.

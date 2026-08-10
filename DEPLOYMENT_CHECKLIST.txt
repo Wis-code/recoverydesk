@@ -1,0 +1,67 @@
+RECOVERYDESK V2 — DEPLOYMENT CHECKLIST
+
+Do NOT delete the existing Firebase Realtime Database.
+Do NOT delete your existing Firebase Authentication users.
+
+A. BEFORE REPLACING THE LIVE APP
+1. Download/keep a copy of the current GitHub repository as the V1 backup.
+2. Firebase Console -> Realtime Database -> Rules.
+3. Replace the current rules with the contents of database.rules.json.
+4. Publish the rules.
+
+B. REPLACE THE GITHUB PAGES APP
+Upload/replace these live app files in the repository root:
+- index.html
+- app.js
+- firebase.js
+- icons.js
+- documents.js
+- styles.css
+- sw.js
+- manifest.webmanifest
+- logo.png
+- icon-192.png
+- icon-512.png
+
+The *.rules files and *.txt files may remain in the repository too; browsers do not execute them.
+
+After GitHub Pages publishes:
+1. Open the existing RecoveryDesk URL.
+2. Sign in with the existing Admin account.
+3. Open Settings.
+4. Update the Admin real name from Staff if needed, then set the preferred display name.
+5. In Settings -> Legacy V1 jobs, migrate any V1 jobs.
+6. Create one test customer/intake and verify multiple-device behavior.
+7. Generate a test agreement/invoice and use Print / Save PDF.
+
+C. FIREBASE STORAGE — DO LATER WHEN BLAZE IS ENABLED
+The main V2 app works without this section. Only attachments/photos wait for it.
+
+1. Upgrade the Firebase project to Blaze in the Firebase/Google billing interface.
+2. Create the default Cloud Firestore database.
+3. Firestore -> Rules -> publish firestore.rules.
+4. Enable Firebase Storage and create the bucket/location you choose.
+5. Storage -> Rules -> publish storage.rules.
+6. Sign back into RecoveryDesk as Admin.
+7. Settings -> File-storage readiness -> Sync all approved access.
+8. Test one device photo and one signed-agreement upload.
+9. Only after the upload test succeeds, optionally enable “Require intake photos before assessment”.
+
+D. STAFF ONBOARDING IN V2
+1. Staff opens RecoveryDesk and creates/signs into their own Firebase account.
+2. They choose “I work at WISCODE” and request staff access.
+3. Admin opens Staff -> Pending access requests.
+4. Admin confirms real name, display name, job title, and assigns Worker / Finance / Administrator.
+5. Staff is then admitted on their next access check/sign-in.
+
+E. CUSTOMER PORTAL ONBOARDING
+1. Staff creates/maintains the customer record in RecoveryDesk.
+2. Customer creates/signs into their own account.
+3. Customer chooses “I'm a customer” and supplies phone/customer/job reference.
+4. Staff/Admin opens Customers -> Portal requests and links the login to the correct customer.
+5. Customer can then see linked jobs and only client-visible documents/attachments.
+
+SECURITY REMINDERS
+- Never put recovered customer files/data into RecoveryDesk Storage.
+- Do not share Firebase/Google billing login credentials, OTPs, card details, or staff passwords.
+- Keep signed physical paperwork until your document-retention policy says it may be destroyed.
