@@ -18,14 +18,14 @@ service cloud.firestore {
       return bootstrapAdmin() ||
         (hasAccess() &&
          get(/databases/$(database)/documents/access/$(request.auth.uid)).data.active == true &&
-         get(/databases/$(database)/documents/access/$(request.auth.uid)).data.role == "admin");
+         get(/databases/$(database)/documents/access/$(request.auth.uid)).data.role in ["owner", "admin", "subadmin"]);
     }
 
     function isOps() {
       return bootstrapAdmin() ||
         (hasAccess() &&
          get(/databases/$(database)/documents/access/$(request.auth.uid)).data.active == true &&
-         get(/databases/$(database)/documents/access/$(request.auth.uid)).data.role in ["admin", "worker"]);
+         get(/databases/$(database)/documents/access/$(request.auth.uid)).data.role in ["owner", "admin", "subadmin", "worker"]);
     }
 
     match /access/{uid} {

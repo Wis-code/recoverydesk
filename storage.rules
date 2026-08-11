@@ -18,7 +18,7 @@ service firebase.storage {
       return bootstrapAdmin() ||
         (staffAccessExists() &&
          firestore.get(/databases/(default)/documents/access/$(request.auth.uid)).data.active == true &&
-         firestore.get(/databases/(default)/documents/access/$(request.auth.uid)).data.role in ["admin", "worker", "finance"]);
+         firestore.get(/databases/(default)/documents/access/$(request.auth.uid)).data.role in ["owner", "admin", "subadmin", "worker", "finance"]);
     }
 
     function isOps() {

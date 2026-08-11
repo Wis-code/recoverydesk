@@ -2,7 +2,7 @@
 import {
   auth, db, firestore, storage, googleProvider, BOOTSTRAP_ADMIN_UID,
   onAuthStateChanged, signInWithEmailAndPassword, createUserWithEmailAndPassword,
-  sendEmailVerification, signInWithPopup, signInWithRedirect, getRedirectResult, signOut,
+  sendEmailVerification, sendPasswordResetEmail, updatePassword, EmailAuthProvider, reauthenticateWithCredential, signInWithPopup, signInWithRedirect, getRedirectResult, signOut,
   ref, get, set, update, remove, push, onValue, runTransaction,
   doc, getDoc, setDoc, deleteDoc,
   storageRef, uploadBytesResumable, getDownloadURL, deleteObject
@@ -34,6 +34,8 @@ const JOB_STATUSES = [
 ];
 
 const ROLE_LABELS = {
+  owner: "Owner Administrator",
+  subadmin: "Sub-Administrator",
   admin: "Administrator",
   worker: "Worker",
   finance: "Finance"
@@ -71,6 +73,7 @@ const state = {
     audit: {},
     staffRequests: {},
     customerAccessRequests: {},
+    communications: {},
     settings: {}
   },
   portal: {
@@ -131,16 +134,24 @@ function roleLabel(role = state.staff?.role) {
   return ROLE_LABELS[role] || "Staff";
 }
 
+function isOwner() {
+  return state.user?.uid === BOOTSTRAP_ADMIN_UID || state.staff?.role === "owner";
+}
+
 function isAdmin() {
-  return state.staff?.role === "admin";
+  return isOwner() || ["admin", "subadmin"].includes(state.staff?.role);
 }
 
 function isOps() {
-  return ["admin", "worker"].includes(state.staff?.role);
+  return isAdmin() || state.staff?.role === "worker";
 }
 
 function isFinance() {
-  return ["admin", "finance"].includes(state.staff?.role);
+  return isAdmin() || state.staff?.role === "finance";
+}
+
+function canManageCriticalSettings() {
+  return isOwner();
 }
 
 function currentUserActive() {
@@ -445,12 +456,13 @@ function renderTopbarStatusOnly() {
 }
 
 async function ensureBootstrapProfile(profile) {
-  if (!state.user || state.user.uid !== BOOTSTRAP_ADMIN_UID || profile.role !== "admin") return profile;
+  if (!state.user || state.user.uid !== BOOTSTRAP_ADMIN_UID) return profile;
   const patch = {};
   if (!profile.realName) patch.realName = profile.name || "Administrator";
   if (!profile.displayName) patch.displayName = profile.name || "Administrator";
   if (profile.active === undefined) patch.active = true;
-  if (!profile.jobTitle) patch.jobTitle = "Administrator";
+  if (!profile.jobTitle) patch.jobTitle = "Owner Administrator";
+  if (profile.role !== "owner") patch.role = "owner";
   if (!profile.email) patch.email = state.user.email || "";
   if (Object.keys(patch).length) {
     try {
@@ -467,7 +479,7 @@ async function ensureFirestoreAccessMirror(profile = state.staff) {
     const accessRef = doc(firestore, "access", state.user.uid);
     const snap = await getDoc(accessRef);
 
-    if (!snap.exists() && (state.user.uid === BOOTSTRAP_ADMIN_UID || profile.role === "admin")) {
+    if (!snap.exists() && (state.user.uid === BOOTSTRAP_ADMIN_UID || ["owner","admin","subadmin"].includes(profile.role))) {
       await setDoc(accessRef, {
         role: profile.role,
         active: profile.active !== false,
@@ -476,7 +488,7 @@ async function ensureFirestoreAccessMirror(profile = state.staff) {
         email: state.user.email || profile.email || "",
         updatedAt: now()
       });
-    } else if (snap.exists() && profile.role === "admin") {
+    } else if (snap.exists() && ["owner","admin","subadmin"].includes(profile.role)) {
       await setDoc(accessRef, {
         role: profile.role,
         active: profile.active !== false,
@@ -543,7 +555,7 @@ function clearIdentityState() {
   state.data = {
     users: {}, customers: {}, devices: {}, jobs: {}, tasks: {}, payments: {},
     expenses: {}, documents: {}, attachments: {}, audit: {}, staffRequests: {},
-    customerAccessRequests: {}, settings: {}
+    customerAccessRequests: {}, communications: {}, settings: {}
   };
 }
 
@@ -638,6 +650,7 @@ function startStaffSubscriptions() {
   subscribeObject("documents", "documents");
   subscribeObject("attachments", "attachments");
   subscribeObject("settings", "settings");
+  subscribeObject("communications", "communications");
   subscribeObject("customerAccessRequests", "customerAccessRequests", isOps());
   subscribeObject("expenses", "expenses", isFinance());
   subscribeObject("staffRequests", "staffRequests", isAdmin());
@@ -790,6 +803,8 @@ function renderAuth() {
             ${signup ? icon("plus", 18) + " Create account" : icon("shield", 18) + " Sign in"}
           </button>
 
+          ${!signup ? `<button type="button" class="ghost full" id="forgotPasswordBtn" style="margin-top:8px">Forgot password?</button>` : ""}
+
           <div class="auth-switch">
             ${signup ? "Already have an account?" : "New staff member or client?"}
             <button type="button" id="switchAuthMode">${signup ? "Sign in" : "Create account"}</button>
@@ -823,6 +838,20 @@ function renderAuth() {
       setBusy(button, false);
     }
   };
+
+  document.getElementById("forgotPasswordBtn")?.addEventListener("click", async () => {
+    const email = document.getElementById("authEmail").value.trim();
+    if (!email) {
+      showError("Enter your email address first, then choose Forgot password.");
+      return;
+    }
+    try {
+      await sendPasswordResetEmail(auth, email);
+      toast("Password reset email sent.", "success");
+    } catch {
+      showError("Password reset email could not be sent.");
+    }
+  });
 
   document.getElementById("authForm").onsubmit = async event => {
     event.preventDefault();
@@ -1171,10 +1200,33 @@ function renderCurrentView() {
 }
 
 function dashboardSentence(overdue, today, attention) {
+  if (state.staff?.role === "finance") {
+    if (overdue) return `You have ${overdue} overdue finance task${overdue === 1 ? "" : "s"} requiring attention.`;
+    return "Review payments, reconciliation and outstanding balances for the business.";
+  }
+  if (state.staff?.role === "worker") {
+    if (overdue) return `You have ${overdue} overdue task${overdue === 1 ? "" : "s"} and work waiting on you.`;
+    if (today) return `${today} task${today === 1 ? "" : "s"} are due today.`;
+    return "Your dashboard is focused on your assigned work, customers and recovery tasks.";
+  }
   if (overdue) return `You have ${overdue} overdue task${overdue === 1 ? "" : "s"} and ${attention} job${attention === 1 ? "" : "s"} needing attention.`;
   if (today) return `${today} task${today === 1 ? "" : "s"} are due today. The rest of your workspace looks under control.`;
   if (attention) return `Your tasks are clear, but ${attention} job${attention === 1 ? "" : "s"} still need attention.`;
   return "Nothing urgent is waiting on you right now. Keep the recovery queue moving.";
+}
+
+function dashboardJobsScope(allJobs) {
+  if (state.staff?.role === "worker") {
+    const assignedJobKeys = new Set(values(state.data.tasks)
+      .filter(task => task.assignedTo === state.user.uid && task.jobKey)
+      .map(task => task.jobKey));
+    const merged = new Map();
+    allJobs
+      .filter(job => job.createdBy === state.user.uid || assignedJobKeys.has(job.key || job.jobId))
+      .forEach(job => merged.set(job.key || job.jobId, job));
+    return [...merged.values()];
+  }
+  return allJobs;
 }
 
 function statCard(label, value, iconName, foot) {
@@ -1288,7 +1340,8 @@ function bindJobRowClicks(scope = document) {
 }
 
 function renderDashboard(host) {
-  const allJobs = values(state.data.jobs).map(job => ({ ...job, key: job.key || job.jobId }));
+  const companyJobs = values(state.data.jobs).map(job => ({ ...job, key: job.key || job.jobId }));
+  const allJobs = dashboardJobsScope(companyJobs);
   const activeJobs = allJobs.filter(job => !["Completed", "Closed"].includes(job.status));
   const attentionJobs = allJobs.filter(job =>
     ["Intake Pending", "Blocked"].includes(job.status) ||
@@ -1312,12 +1365,21 @@ function renderDashboard(host) {
       </div>
     </section>
 
-    <div class="grid four">
-      ${statCard("Active jobs", activeJobs.length, "jobs", `${allJobs.length} total jobs`)}
-      ${statCard("Needs attention", attentionJobs.length, "alert", attentionJobs.length ? "Review pending items" : "Nothing blocked")}
-      ${statCard("Ready to collect", readyJobs.length, "check", "Customer handover queue")}
-      ${statCard("Overdue tasks", overdue.length, "clock", overdue.length ? "Requires action" : "You're caught up")}
-    </div>
+    ${state.staff?.role === "finance" ? `
+      <div class="grid four">
+        ${statCard("Payments recorded", values(state.data.payments).filter(p=>p.status!=="void").length, "finance", "Customer payments")}
+        ${statCard("Awaiting reconciliation", values(state.data.payments).filter(p=>p.status==="confirmed" && !p.reconciledAt).length, "clock", "Check against Moniepoint")}
+        ${statCard("Outstanding jobs", companyJobs.filter(j=>outstandingForJob(j)>0).length, "receipt", "Balances still due")}
+        ${statCard("Overdue tasks", overdue.length, "alert", overdue.length ? "Requires action" : "You're caught up")}
+      </div>
+    ` : `
+      <div class="grid four">
+        ${statCard(state.staff?.role==="worker" ? "My active jobs" : "Active jobs", activeJobs.length, "jobs", `${allJobs.length} in this dashboard`)}
+        ${statCard("Needs attention", attentionJobs.length, "alert", attentionJobs.length ? "Review pending items" : "Nothing blocked")}
+        ${statCard("Ready to collect", readyJobs.length, "check", "Customer handover queue")}
+        ${statCard("Overdue tasks", overdue.length, "clock", overdue.length ? "Requires action" : "You're caught up")}
+      </div>
+    `}
 
     <div class="grid two" style="margin-top:14px">
       <section class="panel">
@@ -1586,6 +1648,18 @@ function renderCustomerDetail(host) {
       ${detailTile("Address / area", customer.address || "—")}
     </div>
 
+    <section class="panel">
+      <div class="panel-head">
+        <div><h2>Customer follow-up</h2><p>Operational emails and relationship follow-up stay on the customer timeline.</p></div>
+        <button class="secondary" id="addFollowupBtn">${icon("plus",16)} Add follow-up note</button>
+      </div>
+      <div class="form-grid">
+        ${detailInfo("Marketing / greetings", customer.marketingConsent === false ? "Opted out" : "Allowed / not opted out")}
+        ${detailInfo("Last contacted", formatDate(customer.lastContactedAt))}
+      </div>
+      <div class="notice info" style="margin-top:12px">Automatic email delivery is not active yet. V2.1 records the communication workflow now so an email service can be connected without redesigning customers again.</div>
+    </section>
+
     <div class="grid two" style="margin-top:14px">
       <section class="panel">
         <div class="panel-head">
@@ -1615,6 +1689,7 @@ function renderCustomerDetail(host) {
   document.getElementById("backCustomers").onclick = () => navigate("customers");
   document.getElementById("editCustomerBtn")?.addEventListener("click", () => openCustomerModal(customer));
   document.getElementById("customerNewIntake")?.addEventListener("click", () => startIntake(customer.customerId));
+  document.getElementById("addFollowupBtn")?.addEventListener("click", () => openFollowupModal(customer));
   document.getElementById("customerAccessBtn")?.addEventListener("click", () => openCustomerPortalRequests(customer.customerId));
   bindJobRowClicks(host);
 }
@@ -1730,6 +1805,67 @@ function openCustomerApprovalModal(uid, request, customers, preselectedCustomerI
     }
   };
 }
+
+
+function openFollowupModal(customer) {
+  const body = `
+    <form id="followupForm">
+      <label class="field"><span>Type</span>
+        <select name="type">
+          <option>Follow-up call</option>
+          <option>Email planned</option>
+          <option>Happy New Month</option>
+          <option>Holiday greeting</option>
+          <option>Thank-you</option>
+          <option>Other</option>
+        </select>
+      </label>
+      <label class="field"><span>Note *</span><textarea name="note" required></textarea></label>
+      <label class="check-row">
+        <input name="marketingConsent" type="checkbox" ${customer.marketingConsent===false?"":"checked"}>
+        <div><strong>Customer allows non-service greetings/marketing</strong><span>Operational job updates are separate from promotional or relationship messages.</span></div>
+      </label>
+    </form>`;
+
+  openModal({
+    title:"Customer follow-up",
+    subtitle:`${customer.customerId} · ${customer.fullName}`,
+    body,
+    actions:`<button class="secondary" data-modal-cancel>Cancel</button><button class="primary" id="saveFollowupBtn">${icon("check",17)} Save</button>`
+  });
+
+  modalHost.querySelector("[data-modal-cancel]").onclick=closeModal;
+
+  document.getElementById("saveFollowupBtn").onclick=async()=>{
+    const form=document.getElementById("followupForm");
+    if(!form.reportValidity()) return;
+    const data=new FormData(form);
+
+    try {
+      const communicationRef=push(ref(db,`communications/${customer.customerId}`));
+      await set(communicationRef,{
+        type:data.get("type"),
+        note:data.get("note").trim(),
+        createdAt:now(),
+        createdBy:state.user.uid,
+        createdByName:profileDisplay()
+      });
+
+      await update(ref(db,`customers/${customer.customerId}`),{
+        marketingConsent:data.get("marketingConsent")==="on",
+        lastContactedAt:now(),
+        updatedAt:now()
+      });
+
+      await recordAudit("recorded follow-up","customer",customer.customerId,data.get("type"));
+      closeModal();
+      toast("Follow-up recorded.","success");
+    } catch {
+      toast("Follow-up could not be saved.","error");
+    }
+  };
+}
+
 
 function renderJobs(host) {
   const jobs = values(state.data.jobs)
@@ -2612,7 +2748,24 @@ async function saveJobControls(job) {
       updatedBy: state.user.uid
     };
 
+    const previousStatus = job.status;
     await update(ref(db, `jobs/${job.key}`), patch);
+
+    if (previousStatus !== patch.status && job.customerId) {
+      const communicationRef = push(ref(db, `communications/${job.customerId}`));
+      await set(communicationRef, {
+        type: "Job milestone",
+        jobKey: job.key,
+        jobId: job.jobId || job.key,
+        milestone: patch.status,
+        note: `Customer-facing milestone reached: ${patch.status}`,
+        deliveryStatus: "pending-email-service",
+        createdAt: now(),
+        createdBy: state.user.uid,
+        createdByName: profileDisplay()
+      });
+    }
+
     await recordAudit("updated", "job", job.jobId || job.key, `Status: ${patch.status}; assessment: ${patch.assessmentResult}`);
     toast("Job updated.", "success");
   } catch (error) {
@@ -2706,6 +2859,8 @@ async function createPayment(payment, audit = true) {
   await set(paymentRef, {
     ...payment,
     status: "confirmed",
+    reconciledAt: null,
+    reconciledBy: "",
     confirmedBy: state.user.uid,
     confirmedByName: profileDisplay(),
     createdAt: now(),
@@ -3296,7 +3451,7 @@ function renderFinance(host) {
                 <strong>${formatMoney(payment.amount)} · ${esc(payment.category || "Payment")}</strong>
                 <span>${esc(payment.jobKey || "")} · ${esc(payment.method || "")} · ${staffName(payment.confirmedBy)}</span>
               </div>
-              <div class="list-side"><span class="tiny muted">${formatDate(payment.createdAt)}</span></div>
+              <div class="list-side"><span class="tiny muted">${formatDate(payment.createdAt)}</span>${payment.reconciledAt ? `<span class="status-pill tone-brand-4">Reconciled</span>` : `<button class="secondary" data-reconcile-payment="${payment.key}">Reconcile</button>`}</div>
             </div>`).join("")}</div>` : emptyState("finance","No payments","Payments recorded on jobs will appear here.")}
       </section>
 
@@ -3327,6 +3482,22 @@ function renderFinance(host) {
     </section>`;
 
   document.getElementById("addExpenseBtn").onclick = openExpenseModal;
+  host.querySelectorAll("[data-reconcile-payment]").forEach(button => {
+    button.onclick = async () => {
+      const key = button.dataset.reconcilePayment;
+      try {
+        await update(ref(db, `payments/${key}`), {
+          reconciledAt: now(),
+          reconciledBy: state.user.uid,
+          reconciledByName: profileDisplay()
+        });
+        await recordAudit("reconciled payment", "payment", key, "Matched against finance records");
+        toast("Payment reconciled.", "success");
+      } catch {
+        toast("Payment could not be reconciled.", "error");
+      }
+    };
+  });
   bindJobRowClicks(host);
 }
 
@@ -3479,7 +3650,8 @@ function openStaffApprovalModal(uid, request) {
           <select name="role">
             <option value="worker">Worker</option>
             <option value="finance">Finance</option>
-            <option value="admin">Administrator</option>
+            <option value="subadmin">Sub-Administrator</option>
+            ${isOwner() ? `<option value="admin">Administrator</option>` : ""}
           </select>
         </label>
       </div>
@@ -3553,7 +3725,7 @@ function openStaffEditModal(profile) {
         <label class="field"><span>Job title</span><input name="jobTitle" value="${esc(profile.jobTitle || "")}"></label>
         <label class="field"><span>Role</span>
           <select name="role">
-            ${["worker","finance","admin"].map(role => `<option value="${role}" ${profile.role===role?"selected":""}>${roleLabel(role)}</option>`).join("")}
+            ${["worker","finance","subadmin","admin","owner"].filter(role => isOwner() || !["admin","owner"].includes(role)).map(role => `<option value="${role}" ${profile.role===role?"selected":""}>${roleLabel(role)}</option>`).join("")}
           </select>
         </label>
       </div>
@@ -3683,7 +3855,17 @@ function renderSettings(host) {
       </section>
     </div>
 
-    ${isAdmin() ? `
+      <section class="panel form-section">
+        <div class="panel-head"><div><h2>Password & sign-in</h2><p>Email/password users can change their password here. Google sign-in remains managed by Google.</p></div></div>
+        ${state.user?.providerData?.some(provider => provider.providerId === "password") ? `
+          <label class="field"><span>Current password</span><input id="currentPassword" type="password"></label>
+          <label class="field"><span>New password</span><input id="newPassword" type="password" minlength="6"></label>
+          <label class="field"><span>Confirm new password</span><input id="confirmNewPassword" type="password" minlength="6"></label>
+          <button class="primary" id="changePasswordBtn">${icon("shield",17)} Change password</button>
+        ` : `<div class="notice info">This account signs in through Google. Password changes are handled by your Google account.</div>`}
+      </section>
+
+    ${canManageCriticalSettings() ? `
       <section class="panel form-section">
         <div class="panel-head">
           <div><h2>Company documents</h2><p>Printed invoices, receipts and agreements use these details.</p></div>
@@ -3758,6 +3940,22 @@ function renderSettings(host) {
       toast("Display name could not be saved.", "error");
     }
   };
+
+  document.getElementById("changePasswordBtn")?.addEventListener("click", async () => {
+    const current = document.getElementById("currentPassword").value;
+    const next = document.getElementById("newPassword").value;
+    const confirm = document.getElementById("confirmNewPassword").value;
+    if (!current || !next) return toast("Enter your current and new password.", "error");
+    if (next !== confirm) return toast("The new passwords do not match.", "error");
+    try {
+      const credential = EmailAuthProvider.credential(state.user.email, current);
+      await reauthenticateWithCredential(state.user, credential);
+      await updatePassword(state.user, next);
+      toast("Password changed.", "success");
+    } catch {
+      toast("Password change failed. Check the current password and try again.", "error");
+    }
+  });
 
   document.getElementById("themePreference").onchange = event => {
     localStorage.setItem("rd-theme", event.target.value);

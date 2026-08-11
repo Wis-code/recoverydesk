@@ -1401,3 +1401,5 @@ td.right, th.right { text-align: right; }
 
   .doc-section, .signature-block, .doc-table { break-inside: avoid; }
 }
+
+/* V2.1 role-focused refinements */

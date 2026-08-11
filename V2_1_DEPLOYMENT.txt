@@ -1,0 +1,13 @@
+RECOVERYDESK V2.1 DEPLOYMENT
+
+1. Firebase Console -> Realtime Database -> Rules.
+2. Replace current rules with database.rules.json from this package and Publish.
+3. In GitHub, create a backup branch named v2-backup from main.
+4. Return to main.
+5. Upload/replace all files from this V2.1 package.
+6. Commit directly to main: Deploy RecoveryDesk V2.1
+7. Wait for GitHub Pages deployment to show a green check.
+8. Open RecoveryDesk and hard refresh.
+9. Test Owner, Worker and Finance roles.
+
+Do not enable Require intake photos until Firebase Storage is actually working.

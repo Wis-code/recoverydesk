@@ -1,0 +1,25 @@
+RECOVERYDESK V2.1 PATCH NOTES
+
+Included now without Firebase Storage billing:
+- Worker-focused dashboard
+- Finance-focused dashboard
+- Finance blocked from creating/editing recovery jobs, customers and devices
+- Payment reconciliation
+- Owner Administrator role for the original owner account
+- Sub-Administrator role
+- Owner-only critical company settings
+- Forgot password
+- Change password for email/password users
+- Google sign-in password guidance
+- Share action on generated invoices, receipts and agreements
+- Customer follow-up records
+- Customer marketing/greeting preference
+- Job milestone communication records prepared for a future email service
+
+Still waiting for Firebase Storage billing:
+- Device intake photographs
+- Signed-paper uploads
+- Staff profile photographs
+- Photo-based staff ID cards
+
+Automatic email delivery is not active yet. V2.1 stores the events and communication preferences so an email provider can be connected later without another customer-data redesign.

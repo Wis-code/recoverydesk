@@ -197,11 +197,21 @@ export function openPrintableDocument(payload) {
     <div class="document-overlay">
       <div class="document-actions no-print">
         <button class="button secondary" data-doc-close>${icon("close", 18)} Close</button>
-        <button class="button primary" data-doc-print>${icon("download", 18)} Print / Save PDF</button>
+        <button class="button secondary" data-doc-share>${icon("link", 18)} Share</button><button class="button primary" data-doc-print>${icon("download", 18)} Print / Save PDF</button>
       </div>
       ${buildDocumentHtml(payload)}
     </div>`;
 
   host.querySelector("[data-doc-close]").onclick = () => host.replaceChildren();
   host.querySelector("[data-doc-print]").onclick = () => window.print();
+  host.querySelector("[data-doc-share]").onclick = async () => {
+    const title = `${payload.type || "RecoveryDesk document"} ${payload.number || ""}`.trim();
+    if (navigator.share) {
+      try {
+        await navigator.share({ title, text: `${title} · WISCODE INNOVATIONS LTD` });
+      } catch {}
+    } else {
+      alert("Use Print / Save PDF, then share the saved PDF from your device.");
+    }
+  };
 }
