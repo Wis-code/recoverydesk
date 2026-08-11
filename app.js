@@ -74,6 +74,10 @@ const state = {
     staffRequests: {},
     customerAccessRequests: {},
     communications: {},
+    jobPosts: {},
+    workerLedger: {},
+    workerLedgerReviews: {},
+    training: {},
     settings: {}
   },
   portal: {
@@ -251,6 +255,7 @@ function navigate(view, options = {}) {
   if ("jobKey" in options) state.selectedJobKey = options.jobKey;
   render();
   window.scrollTo({ top: 0, behavior: "instant" });
+  setTimeout(() => maybeRunTabTraining(view), 30);
 }
 
 function openModal({ title, subtitle = "", body = "", wide = false, actions = "" }) {
@@ -424,6 +429,28 @@ function pendingCustomerAccessCount() {
   return values(state.data.customerAccessRequests).filter(request => request.status !== "approved" && request.status !== "rejected").length;
 }
 
+function effectivePostStatus(post) {
+  if (!post) return "unknown";
+  if (post.status === "available" && (safeNumber(post.deadlineMs) || (post.deadlineAt ? new Date(post.deadlineAt).getTime() : 0)) < now()) return "expired";
+  return post.status || "available";
+}
+
+function availablePostCount() {
+  if (!isOps()) return 0;
+  return values(state.data.jobPosts).filter(post => effectivePostStatus(post) === "available").length;
+}
+
+function pendingLedgerCount() {
+  const entries = typeof allWorkerLedgerEntries === "function" ? allWorkerLedgerEntries() : [];
+  if (state.staff?.role === "worker") {
+    return entries.filter(entry => !ledgerReview(entry.key, entry.ledgerOwnerUid).reconciledAt).length;
+  }
+  if (isAdmin() || state.staff?.role === "finance") {
+    return entries.filter(entry => !ledgerReview(entry.key, entry.ledgerOwnerUid).reconciledAt).length;
+  }
+  return 0;
+}
+
 function applyTheme() {
   const preference = localStorage.getItem("rd-theme") || "system";
   const media = window.matchMedia("(prefers-color-scheme: dark)");
@@ -555,7 +582,7 @@ function clearIdentityState() {
   state.data = {
     users: {}, customers: {}, devices: {}, jobs: {}, tasks: {}, payments: {},
     expenses: {}, documents: {}, attachments: {}, audit: {}, staffRequests: {},
-    customerAccessRequests: {}, communications: {}, settings: {}
+    customerAccessRequests: {}, communications: {}, jobPosts: {}, workerLedger: {}, workerLedgerReviews: {}, training: {}, settings: {}
   };
 }
 
@@ -651,6 +678,10 @@ function startStaffSubscriptions() {
   subscribeObject("attachments", "attachments");
   subscribeObject("settings", "settings");
   subscribeObject("communications", "communications");
+  subscribeObject("jobPosts", "jobPosts", isOps());
+  subscribeObject(state.staff?.role === "worker" ? `workerLedger/${state.user.uid}` : "workerLedger", "workerLedger", state.staff?.role === "worker" || isAdmin() || state.staff?.role === "finance");
+  subscribeObject(state.staff?.role === "worker" ? `workerLedgerReviews/${state.user.uid}` : "workerLedgerReviews", "workerLedgerReviews", state.staff?.role === "worker" || isAdmin() || state.staff?.role === "finance");
+  subscribeObject(`training/${state.user.uid}`, "training");
   subscribeObject("customerAccessRequests", "customerAccessRequests", isOps());
   subscribeObject("expenses", "expenses", isFinance());
   subscribeObject("staffRequests", "staffRequests", isAdmin());
@@ -1036,13 +1067,155 @@ function bindCustomerRequestForm() {
 }
 
 
+
+const TRAINING_TABS = new Set(["dashboard","customers","jobs","board","tasks","expenses","finance","staff","audit","settings"]);
+
+function trainingRoleKey() {
+  return state.staff?.role || "staff";
+}
+
+function trainingSlidesFor(view) {
+  const role = trainingRoleKey();
+  const management = ["owner","admin","subadmin"].includes(role);
+
+  const common = {
+    dashboard: management ? [
+      ["home", "Your command centre", "Use this page to spot overdue work, bottlenecks and what needs attention across the business."],
+      ["tasks", "Act on exceptions", "The dashboard is for decisions. Open the relevant job, task or finance item instead of changing records casually."],
+      ["audit", "Everything important is accountable", "Assignments, submitted-job edits, finance reconciliation and staff actions are designed to leave an audit trail."]
+    ] : role === "finance" ? [
+      ["finance", "Your finance workspace", "Focus on payments, reconciliation, outstanding balances and worker money declarations."],
+      ["shield", "Operations stay read-only", "Finance can inspect the job context needed for money control but cannot change recovery records or legal terms."],
+      ["audit", "Reconcile; do not rewrite", "Confirm what reached the company records without changing the worker's original declaration."]
+    ] : [
+      ["home", "Your work, not everybody's", "Your dashboard focuses on jobs assigned to you and the tasks you need to complete."],
+      ["jobs", "Own the work you take", "Claim available work or receive an assignment. Other workers' jobs remain read-only."],
+      ["shield", "Submitted records are serious", "Once you submit a job record, any later correction requires a written reason and is permanently auditable."]
+    ],
+    customers: [
+      ["customers", "One permanent customer record", "Search before creating a customer so returning customers keep the same history."],
+      ["devices", "Devices stay linked", "A customer may bring several devices today and return later with the same or different devices."],
+      ["shield", "Identity matters", "Customer names, owner, submitter and signer details are business records. Change them only when verified."]
+    ],
+    jobs: [
+      ["jobs", "Jobs have ownership", "Only Admin/Sub-Admin/Owner or the worker assigned to a job can change its operational record."],
+      ["shield", "Submit when the record is ready", "A worker's draft becomes an auditable submitted record. Later worker edits require a written reason."],
+      ["file", "Legal documents preserve history", "Generated agreements and invoices are snapshots. Corrections create a new document rather than silently rewriting the old one."]
+    ],
+    board: management ? [
+      ["jobs", "Post work to the team", "Create an available job with a clear deadline, priority and instructions. You can optionally link it to an existing recovery job."],
+      ["clock", "Deadlines are visible", "Unclaimed work past its deadline shows as expired. Urgent work should have a realistic deadline."],
+      ["shield", "You remain in control", "You can cancel a post or reassign claimed work. Claims and cancellations are recorded."]
+    ] : [
+      ["jobs", "Available work lives here", "Active workers can see open posts with priority, instructions and deadline."],
+      ["check", "Claim means responsibility", "The first successful claim gets the work. A linked recovery job is assigned to you."],
+      ["clock", "Watch the deadline", "Do not claim work you cannot complete responsibly before the deadline."]
+    ],
+    tasks: management ? [
+      ["tasks", "Turn work into clear actions", "Assign tasks to the right person with a due date and priority."],
+      ["clock", "Overdue work surfaces automatically", "Use due dates so the dashboard can show what needs intervention."],
+      ["audit", "Completion is recorded", "The system records who completed or reopened a task."]
+    ] : [
+      ["tasks", "This is your to-do list", "Work assigned to you appears here with its due date and priority."],
+      ["check", "Complete tasks when truly done", "Marking a task complete records your identity and time."],
+      ["clock", "Overdue means act", "If a deadline cannot be met, tell the person responsible instead of ignoring it."]
+    ],
+    expenses: management || role === "finance" ? [
+      ["receipt", "Worker declarations are original records", "Workers can declare expenses or customer money they personally handled. Their original declaration cannot be silently edited."],
+      ["finance", "Finance reconciles separately", "Finance/Admin records the review result and note without rewriting what the worker originally submitted."],
+      ["shield", "Company payment is preferred", "Customer money should normally go through the company/Finance channel. Personal handling should be exceptional and documented."]
+    ] : [
+      ["receipt", "Record money you personally handled", "Use this only when you personally paid an expense or received customer money outside the normal company payment channel."],
+      ["shield", "Your declaration becomes immutable", "Enter the item, amount, date, payment method and related job carefully. You cannot edit or delete the original after submission."],
+      ["finance", "Finance will reconcile it", "Finance/Admin reviews the declaration separately. For bank details, record only an account label and last four digits—not passwords, PINs or OTPs."]
+    ],
+    finance: [
+      ["finance", "Finance controls the money record", "Review customer payments, outstanding balances, company expenses and worker declarations."],
+      ["check", "Reconciliation is a separate action", "Mark a payment or worker declaration reconciled only after checking the supporting company record."],
+      ["shield", "Do not alter operations", "Finance must not change device ownership, technical recovery status, signer details or legal terms."]
+    ],
+    staff: [
+      ["staff", "Access is approved, not assumed", "A sign-in account does not become staff until an Administrator approves it and assigns a role."],
+      ["shield", "Use the least privilege needed", "Worker, Finance and Sub-Administrator roles should match the person's real responsibilities."],
+      ["audit", "Owner-level controls stay protected", "Critical company identity/security settings remain Owner-only."]
+    ],
+    audit: [
+      ["audit", "Audit is the accountability trail", "Use it to understand who created, submitted, edited, reassigned or reconciled a record."],
+      ["shield", "Reasons matter", "Submitted-job corrections include the worker's written reason and before/after values."],
+      ["file", "Do not use audit as an edit screen", "Correct the source record through its proper workflow; Audit exists to preserve history."]
+    ],
+    settings: [
+      ["settings", "Personal and company settings are separate", "Staff may change permitted personal preferences; critical company settings are Owner-controlled."],
+      ["shield", "Security comes first", "Password tools depend on your sign-in method. Never share passwords, PINs, OTPs or private banking credentials."],
+      ["audit", "Training can be replayed", "The Owner can manage system configuration here, and any user can replay these lessons when they need a refresher."]
+    ]
+  };
+  return common[view] || [];
+}
+
+function maybeRunTabTraining(view) {
+  if (!state.user || !state.staff || !TRAINING_TABS.has(view)) return;
+  if (modalHost.children.length) return;
+  const key = `${view}_${trainingRoleKey()}`;
+  if (state.data.training?.[key]?.completedAt) return;
+  const slides = trainingSlidesFor(view);
+  if (!slides.length) return;
+  openMandatoryTraining(view, key, slides);
+}
+
+function openMandatoryTraining(view, key, slides) {
+  let index = 0;
+
+  const draw = () => {
+    const [iconName, title, text] = slides[index];
+    modalHost.innerHTML = `
+      <div class="training-backdrop">
+        <section class="training-modal" role="dialog" aria-modal="true" aria-label="Required RecoveryDesk training">
+          <div class="training-brand"><img src="./logo.png" alt=""><span>RecoveryDesk guided training</span></div>
+          <div class="training-animation">${icon(iconName, 42)}<span></span><span></span></div>
+          <span class="eyebrow">${esc(currentViewTitle())} · ${index + 1} of ${slides.length}</span>
+          <h2>${esc(title)}</h2>
+          <p>${esc(text)}</p>
+          <div class="training-progress">${slides.map((_,i)=>`<span class="${i <= index ? "done" : ""}"></span>`).join("")}</div>
+          <div class="notice info">This first-visit lesson is required. It cannot be skipped.</div>
+          <button class="primary full" id="trainingNext" disabled>${index === slides.length - 1 ? "I understand" : "Continue"}</button>
+        </section>
+      </div>`;
+
+    const button = document.getElementById("trainingNext");
+    setTimeout(() => { if (button) button.disabled = false; }, 1100);
+    button.onclick = async () => {
+      if (index < slides.length - 1) {
+        index += 1;
+        draw();
+        return;
+      }
+      button.disabled = true;
+      try {
+        const completion = { completedAt: now(), role: trainingRoleKey(), view, version: "2.3-final" };
+        state.data.training[key] = completion;
+        await set(ref(db, `training/${state.user.uid}/${key}`), completion);
+        modalHost.replaceChildren();
+        await recordAudit("completed training", "training", key, `${currentViewTitle()} first-visit training`);
+      } catch {
+        button.disabled = false;
+        toast("Training completion could not be saved. Check your connection and try again.", "error");
+      }
+    };
+  };
+  draw();
+}
+
 function navItems() {
   const items = [
     ["dashboard", "home", "Dashboard", ""],
     ["customers", "customers", "Customers", pendingCustomerAccessCount() ? String(pendingCustomerAccessCount()) : ""],
-    ["jobs", "jobs", "Jobs", ""],
-    ["tasks", "tasks", "Tasks", overdueTaskCount() ? String(overdueTaskCount()) : ""]
+    ["jobs", "jobs", "Jobs", ""]
   ];
+
+  if (isOps()) items.push(["board", "jobs", "Job Board", availablePostCount() ? String(availablePostCount()) : ""]);
+  items.push(["tasks", "tasks", "Tasks", overdueTaskCount() ? String(overdueTaskCount()) : ""]);
+  items.push(["expenses", "receipt", state.staff?.role === "worker" ? "My Expenses" : "Expenses", pendingLedgerCount() ? String(pendingLedgerCount()) : ""]);
 
   if (isFinance()) items.push(["finance", "finance", "Finance", ""]);
   if (isAdmin()) items.push(["staff", "staff", "Staff", pendingAccessCount() ? String(pendingAccessCount()) : ""]);
@@ -1073,7 +1246,9 @@ function currentViewTitle() {
     jobs: "Jobs",
     "job-detail": "Job",
     "new-intake": "New intake",
+    board: "Job Board",
     tasks: "Tasks",
+    expenses: "Expenses",
     finance: "Finance",
     staff: "Staff",
     audit: "Audit",
@@ -1141,6 +1316,7 @@ function renderStaffApp() {
 
   bindShellEvents();
   renderCurrentView();
+  setTimeout(() => maybeRunTabTraining(state.view), 20);
 }
 
 function bindShellEvents() {
@@ -1189,7 +1365,9 @@ function renderCurrentView() {
   if (state.view === "jobs") return renderJobs(host);
   if (state.view === "job-detail") return renderJobDetail(host);
   if (state.view === "new-intake") return renderNewIntake(host);
+  if (state.view === "board" && isOps()) return renderJobBoard(host);
   if (state.view === "tasks") return renderTasks(host);
+  if (state.view === "expenses") return renderWorkerLedger(host);
   if (state.view === "finance" && isFinance()) return renderFinance(host);
   if (state.view === "staff" && isAdmin()) return renderStaff(host);
   if (state.view === "audit" && isAdmin()) return renderAudit(host);
@@ -1400,6 +1578,8 @@ function renderDashboard(host) {
         </div>
         <div class="quick-actions">
           ${isOps() ? quickAction("intake", "plus", "New intake", "Customer + devices") : ""}
+          ${isOps() ? quickAction("board", "jobs", state.staff?.role === "worker" ? "Available jobs" : "Job board", state.staff?.role === "worker" ? "Claim team work" : "Post work to the team") : ""}
+          ${state.staff?.role === "worker" ? quickAction("expenses", "receipt", "Record expense", "Money you personally handled") : ""}
           ${quickAction("customers", "search", "Find customer", "Returning customer history")}
           ${quickAction("jobs", "jobs", "Open jobs", "Recovery work queue")}
           ${isFinance() ? quickAction("finance", "finance", "Finance", "Payments & outstanding") : ""}
@@ -1542,6 +1722,7 @@ function openCustomerModal(existing = null) {
         <label class="field"><span>Email</span><input name="email" type="email" value="${esc(existing?.email || "")}"></label>
         <label class="field"><span>Address / area</span><input name="address" value="${esc(existing?.address || "")}"></label>
       </div>
+      ${!isEdit && isAdmin() ? `<label class="check-row"><input type="checkbox" name="testRecord"><div><strong>Test / dummy customer</strong><span>Marks this record so the Owner can remove it safely during testing.</span></div></label>` : ""}
       ${isEdit ? `<div class="notice info">Customers cannot change their own name in the portal. Staff changes remain part of the audit history.</div>` : ""}
     </form>`;
 
@@ -1589,6 +1770,7 @@ function openCustomerModal(existing = null) {
           email: String(form.get("email") || "").trim(),
           address: String(form.get("address") || "").trim(),
           active: true,
+          testRecord: form.get("testRecord") === "on",
           createdAt: now(),
           createdBy: state.user.uid,
           updatedAt: now()
@@ -2342,6 +2524,7 @@ async function saveIntake() {
           previousAttempt: draftDevice.previousAttempt || "No",
           problem: draftDevice.problem || "",
           requestedData: draftDevice.requestedData || "",
+          testRecord: Boolean(customer.testRecord),
           createdAt: now(),
           createdBy: state.user.uid,
           lastSeenAt: now(),
@@ -2401,6 +2584,10 @@ async function saveIntake() {
       assignedToName: profileDisplay(),
       assignedAt: now(),
       assignedBy: state.user.uid,
+      recordState: "draft",
+      testRecord: Boolean(customer.testRecord),
+      submittedAt: null,
+      submittedBy: "",
       createdAt: now(),
       createdBy: state.user.uid,
       updatedAt: now()
@@ -2516,6 +2703,56 @@ function staffName(uid) {
   return profile?.displayName || profile?.realName || profile?.name || "staff";
 }
 
+function workerOwnsJob(job) {
+  return state.staff?.role === "worker" && (
+    job?.assignedTo === state.user?.uid ||
+    (!job?.assignedTo && job?.createdBy === state.user?.uid)
+  );
+}
+
+function canControlJob(job) {
+  return isAdmin() || workerOwnsJob(job);
+}
+
+function jobIsSubmitted(job) {
+  return job?.recordState === "submitted";
+}
+
+function requestSubmittedEditReason(job) {
+  return new Promise(resolve => {
+    const body = `
+      <div class="notice warning">
+        This job record has already been submitted. Changes are permanently auditable and may have legal or compliance consequences if the record is altered inaccurately.
+      </div>
+      <form id="submittedEditReasonForm" style="margin-top:14px">
+        <label class="field"><span>Reason for editing this submitted record *</span>
+          <textarea id="submittedEditReason" minlength="10" required placeholder="Explain exactly why this submitted job record needs to be changed."></textarea>
+        </label>
+        <div class="notice info">The reason, your identity, date/time and the edited values will be kept in the audit trail.</div>
+      </form>`;
+
+    openModal({
+      title: "Edit submitted job",
+      subtitle: job.jobId || job.key,
+      body,
+      actions: `<button class="secondary" id="cancelSubmittedEdit">Cancel</button><button class="primary" id="confirmSubmittedEdit">${icon("audit",17)} Continue with edit</button>`
+    });
+
+    document.getElementById("cancelSubmittedEdit").onclick = () => {
+      closeModal();
+      resolve("");
+    };
+
+    document.getElementById("confirmSubmittedEdit").onclick = () => {
+      const form = document.getElementById("submittedEditReasonForm");
+      if (!form.reportValidity()) return;
+      const reason = document.getElementById("submittedEditReason").value.trim();
+      closeModal();
+      resolve(reason);
+    };
+  });
+}
+
 function renderJobDetail(host) {
   const job = jobByKey(state.selectedJobKey);
 
@@ -2541,17 +2778,17 @@ function renderJobDetail(host) {
       <div>
         <button class="ghost" id="backJobs">${icon("back",16)} Jobs</button>
         <h1>${esc(job.jobId || job.key)}</h1>
-        <p>${esc(jobDisplayName(job))} · ${esc(jobDeviceSummary(job))}</p>
+        <p><strong>Owner: ${esc(job.ownerName || customer?.fullName || jobDisplayName(job))}</strong> · Customer: ${esc(customer?.fullName || jobDisplayName(job))} · ${esc(jobDeviceSummary(job))}</p>
       </div>
       <div class="head-actions">
-        ${isOps() ? `<button class="secondary" id="jobTaskBtn">${icon("tasks",17)} Add task</button>` : ""}
+        ${canControlJob(job) ? `<button class="secondary" id="jobTaskBtn">${icon("tasks",17)} Add task</button>` : ""}
         <button class="secondary" id="jobEmailUpdateBtn">${icon("file",17)} Email update</button>
-        <button class="secondary" id="jobAgreementBtn">${icon("signature",17)} Agreement</button>
-        <button class="primary" id="jobInvoiceBtn">${icon("receipt",17)} Invoice</button>
+        ${canControlJob(job) ? `<button class="secondary" id="jobAgreementBtn">${icon("signature",17)} Agreement</button>` : ""}
+        ${canControlJob(job) ? `<button class="primary" id="jobInvoiceBtn">${icon("receipt",17)} Invoice</button>` : ""}
       </div>
     </div>
 
-    <div class="grid three">
+    <div class="grid four">
       <div class="panel flat">
         <span class="eyebrow">Current status</span>
         <div style="margin-top:8px">${statusPill(job.status)}</div>
@@ -2565,6 +2802,11 @@ function renderJobDetail(host) {
         <span class="eyebrow">Outstanding</span>
         <strong style="display:block;margin-top:8px">${formatMoney(outstandingForJob(job))}</strong>
         <span class="tiny muted">${formatMoney(paidForJob(job.key))} recorded paid</span>
+      </div>
+      <div class="panel flat">
+        <span class="eyebrow">Record state</span>
+        <div style="margin-top:8px">${jobIsSubmitted(job) ? `<span class="status-pill tone-warning">${icon("shield",13)} Submitted / auditable</span>` : `<span class="status-pill tone-brand-1">Draft</span>`}</div>
+        <span class="tiny muted">${jobIsSubmitted(job) ? `Submitted ${formatDate(job.submittedAt, true)} by ${esc(staffName(job.submittedBy))}` : "Assigned worker may still complete the draft"}</span>
       </div>
     </div>
 
@@ -2607,7 +2849,7 @@ function renderJobDetail(host) {
             : `Recovery quote is ${formatMoney(job.recoveryQuote)}. ${job.status === "Awaiting Approval" ? "Customer approval is still pending." : "Move the job to Awaiting Approval when the quote is ready for the customer."}`}
           ${isOps() && job.status === "Awaiting Approval" && !job.quoteApproval?.approved ? `<div style="margin-top:9px"><button class="secondary" id="confirmLocalQuoteApproval">${icon("check",16)} Confirm local customer approval</button></div>` : ""}
         </div>` : ""}
-        ${isOps() && (state.staff?.role !== "worker" || job.assignedTo === state.user.uid || (!job.assignedTo && job.createdBy === state.user.uid)) ? `
+        ${canControlJob(job) ? `
           <div class="form-grid">
             <label class="field"><span>Status</span>
               <select id="jobStatus">${JOB_STATUSES.map(status => `<option ${job.status === status ? "selected" : ""}>${status}</option>`).join("")}</select>
@@ -2620,9 +2862,13 @@ function renderJobDetail(host) {
             <label class="field"><span>Recovery quote (₦)</span><input id="jobRecoveryQuote" type="number" min="0" value="${esc(job.recoveryQuote || "")}"></label>
             ${isAdmin() ? `<label class="field"><span>Discount (₦)</span><input id="jobDiscount" type="number" min="0" value="${esc(job.discount || "")}"><small>Administrator-controlled commercial adjustment</small></label>` : ""}
           </div>
+          ${jobIsSubmitted(job) && workerOwnsJob(job) ? `<div class="notice warning" style="margin-bottom:10px">${icon("audit",15)} This record has been submitted. Every worker edit now requires a written reason and is permanently logged.</div>` : ""}
           <label class="field"><span>Internal staff notes</span><textarea id="jobStaffNotes">${esc(job.staffNotes || "")}</textarea></label>
-          <button class="primary" id="saveJobControls">${icon("check",17)} Save job changes</button>
-        ` : `<div class="notice info">Your role can view the job but does not change technical recovery status.</div>`}
+          <div class="head-actions" style="justify-content:flex-start">
+            <button class="primary" id="saveJobControls">${icon("check",17)} ${jobIsSubmitted(job) && workerOwnsJob(job) ? "Edit submitted job" : "Save job changes"}</button>
+            ${workerOwnsJob(job) && !jobIsSubmitted(job) ? `<button class="secondary" id="submitJobRecord">${icon("shield",17)} Submit job record</button>` : ""}
+          </div>
+        ` : `<div class="notice info">Read-only record. Only an Administrator or the worker assigned to this job can change its operational details.</div>`}
       </section>
     </div>
 
@@ -2641,7 +2887,7 @@ function renderJobDetail(host) {
           <div><h2>Payments</h2><p>Assessment, deposits and recovery charges</p></div>
           <div class="head-actions">
             ${payments.length ? `<button class="secondary" id="jobReceiptBtn">${icon("receipt",16)} Receipt</button>` : ""}
-            <button class="secondary" id="recordPaymentBtn">${icon("plus",16)} Record payment</button>
+            ${canControlJob(job) || state.staff?.role === "finance" ? `<button class="secondary" id="recordPaymentBtn">${icon("plus",16)} Record payment</button>` : ""}
           </div>
         </div>
         ${renderPayments(payments)}
@@ -2650,7 +2896,7 @@ function renderJobDetail(host) {
       <section class="panel">
         <div class="panel-head">
           <div><h2>Tasks</h2><p>Work linked specifically to this job</p></div>
-          ${isOps() ? `<button class="secondary" id="jobTaskBtn2">${icon("plus",16)} Add</button>` : ""}
+          ${canControlJob(job) ? `<button class="secondary" id="jobTaskBtn2">${icon("plus",16)} Add</button>` : ""}
         </div>
         ${tasks.length ? tasks.map(taskRowHtml).join("") : emptyState("tasks","No job tasks","Add a task for assessment, customer contact or recovery work.")}
       </section>
@@ -2662,8 +2908,8 @@ function renderJobDetail(host) {
           <div><h2>Documents</h2><p>Invoices, receipts and the service agreement</p></div>
           <div class="head-actions">
             <button class="secondary" id="emailInvoiceNotice">${icon("file",16)} Email invoice</button>
-            <button class="secondary" id="generateAgreement">${icon("signature",16)} Agreement</button>
-            <button class="secondary" id="generateInvoice">${icon("receipt",16)} Invoice</button>
+            ${canControlJob(job) ? `<button class="secondary" id="generateAgreement">${icon("signature",16)} Agreement</button>` : ""}
+            ${canControlJob(job) ? `<button class="secondary" id="generateInvoice">${icon("receipt",16)} Invoice</button>` : ""}
           </div>
         </div>
         ${renderDocumentsList(documents, job)}
@@ -2672,7 +2918,7 @@ function renderJobDetail(host) {
       <section class="panel">
         <div class="panel-head">
           <div><h2>Attachments</h2><p>Device photos and exact copies of signed paperwork</p></div>
-          ${isOps() ? `<button class="secondary" id="uploadSignedAgreement">${icon("upload",16)} Signed copy</button>` : ""}
+          ${canControlJob(job) ? `<button class="secondary" id="uploadSignedAgreement">${icon("upload",16)} Signed copy</button>` : ""}
         </div>
         ${renderAttachments(attachments, job)}
       </section>
@@ -2680,19 +2926,20 @@ function renderJobDetail(host) {
 
   document.getElementById("backJobs").onclick = () => navigate("jobs");
   document.getElementById("saveJobControls")?.addEventListener("click", () => saveJobControls(job));
-  document.getElementById("recordPaymentBtn").onclick = () => openPaymentModal(job);
+  document.getElementById("submitJobRecord")?.addEventListener("click", () => submitJobRecord(job));
+  document.getElementById("recordPaymentBtn")?.addEventListener("click", () => openPaymentModal(job));
   document.getElementById("confirmLocalQuoteApproval")?.addEventListener("click", () => confirmQuoteApproval(job, "staff-confirmed"));
   document.getElementById("checkpointPaymentBtn")?.addEventListener("click", () => openPaymentModal(job));
   document.getElementById("confirmSignatureBtn")?.addEventListener("click", () => confirmPhysicalSignature(job));
   document.getElementById("jobReceiptBtn")?.addEventListener("click", () => generateDocument(job, "receipt"));
   document.getElementById("jobTaskBtn")?.addEventListener("click", () => openTaskModal(job));
   document.getElementById("jobTaskBtn2")?.addEventListener("click", () => openTaskModal(job));
-  document.getElementById("jobEmailUpdateBtn").onclick = () => emailJobUpdate(job);
-  document.getElementById("jobAgreementBtn").onclick = () => generateDocument(job, "agreement");
-  document.getElementById("jobInvoiceBtn").onclick = () => generateDocument(job, "invoice");
-  document.getElementById("emailInvoiceNotice").onclick = () => emailInvoiceNotice(job);
-  document.getElementById("generateAgreement").onclick = () => generateDocument(job, "agreement");
-  document.getElementById("generateInvoice").onclick = () => generateDocument(job, "invoice");
+  document.getElementById("jobEmailUpdateBtn")?.addEventListener("click", () => emailJobUpdate(job));
+  document.getElementById("jobAgreementBtn")?.addEventListener("click", () => generateDocument(job, "agreement"));
+  document.getElementById("jobInvoiceBtn")?.addEventListener("click", () => generateDocument(job, "invoice"));
+  document.getElementById("emailInvoiceNotice")?.addEventListener("click", () => emailInvoiceNotice(job));
+  document.getElementById("generateAgreement")?.addEventListener("click", () => generateDocument(job, "agreement"));
+  document.getElementById("generateInvoice")?.addEventListener("click", () => generateDocument(job, "invoice"));
   document.getElementById("uploadSignedAgreement")?.addEventListener("click", () => openAttachmentModal(job, "signed-agreement"));
 
   host.querySelectorAll("[data-upload-device-photos]").forEach(button => {
@@ -2793,13 +3040,61 @@ function renderJobDeviceCard(job, device) {
     </div>`;
 }
 
-async function saveJobControls(job) {
-  if (state.staff?.role === "worker") {
-    const ownsJob = job.assignedTo === state.user.uid || (!job.assignedTo && job.createdBy === state.user.uid);
-    if (!ownsJob) {
-      toast("This job is assigned to another worker. Ask an Administrator to reassign it.", "error");
-      return;
+
+async function submitJobRecord(job) {
+  if (!workerOwnsJob(job) || jobIsSubmitted(job)) return;
+
+  const body = `
+    <div class="notice warning">
+      Submitting locks this worker record into the audit process. You can still correct it later, but every later edit will require a written reason.
+    </div>
+    <div style="margin-top:12px">
+      ${detailInfo("Device owner", job.ownerName || jobCustomer(job)?.fullName || "—")}
+      ${detailInfo("Customer", jobCustomer(job)?.fullName || "—")}
+      ${detailInfo("Assigned worker", profileDisplay())}
+    </div>`;
+
+  openModal({
+    title: "Submit job record",
+    subtitle: job.jobId || job.key,
+    body,
+    actions: `<button class="secondary" data-modal-cancel>Cancel</button><button class="primary" id="confirmSubmitJob">${icon("shield",17)} Submit & lock audit trail</button>`
+  });
+
+  modalHost.querySelector("[data-modal-cancel]").onclick = closeModal;
+
+  document.getElementById("confirmSubmitJob").onclick = async event => {
+    const button = event.currentTarget;
+    setBusy(button, true, "Submitting…");
+    try {
+      await update(ref(db, `jobs/${job.key}`), {
+        recordState: "submitted",
+        submittedAt: now(),
+        submittedBy: state.user.uid,
+        updatedAt: now(),
+        updatedBy: state.user.uid
+      });
+      await recordAudit("submitted", "job", job.jobId || job.key, "Worker submitted job record into auditable state");
+      closeModal();
+      toast("Job submitted. Future worker edits require a written reason.", "success");
+    } catch (error) {
+      console.error(error);
+      toast("Job could not be submitted.", "error");
+      setBusy(button, false);
     }
+  };
+}
+
+async function saveJobControls(job) {
+  if (!canControlJob(job)) {
+    toast("This job is read-only for your role.", "error");
+    return;
+  }
+
+  let editReason = "";
+  if (workerOwnsJob(job) && jobIsSubmitted(job)) {
+    editReason = await requestSubmittedEditReason(job);
+    if (!editReason) return;
   }
 
   const button = document.getElementById("saveJobControls");
@@ -2816,10 +3111,39 @@ async function saveJobControls(job) {
       ...(isAdmin() ? { discount: safeNumber(document.getElementById("jobDiscount")?.value) } : {}),
       staffNotes: document.getElementById("jobStaffNotes").value.trim(),
       updatedAt: now(),
-      updatedBy: state.user.uid
+      updatedBy: state.user.uid,
+      ...(editReason ? {
+        lastEditReason: editReason,
+        lastEditedAt: now(),
+        lastEditedBy: state.user.uid,
+        lastEditedByName: profileDisplay()
+      } : {})
     };
 
     const previousStatus = job.status;
+
+    if (editReason) {
+      const editRef = push(ref(db, `jobEdits/${job.key}`));
+      await set(editRef, {
+        reason: editReason,
+        actorUid: state.user.uid,
+        actorName: profileDisplay(),
+        before: {
+          status: job.status || "",
+          assessmentResult: job.assessmentResult || "",
+          recoveryQuote: safeNumber(job.recoveryQuote),
+          staffNotes: job.staffNotes || ""
+        },
+        after: {
+          status: patch.status,
+          assessmentResult: patch.assessmentResult,
+          recoveryQuote: patch.recoveryQuote,
+          staffNotes: patch.staffNotes
+        },
+        createdAt: now()
+      });
+    }
+
     await update(ref(db, `jobs/${job.key}`), patch);
 
     if (previousStatus !== patch.status && job.customerId) {
@@ -2845,7 +3169,7 @@ async function saveJobControls(job) {
         `${staffName(job.assignedTo) || "Unassigned"} → ${staffName(patch.assignedTo) || "Unassigned"}`
       );
     }
-    await recordAudit("updated", "job", job.jobId || job.key, `Status: ${patch.status}; assessment: ${patch.assessmentResult}`);
+    await recordAudit(editReason ? "edited submitted job" : "updated", "job", job.jobId || job.key, `${editReason ? `Reason: ${editReason} · ` : ""}Status: ${patch.status}; assessment: ${patch.assessmentResult}`);
     toast("Job updated.", "success");
   } catch (error) {
     console.error(error);
@@ -3015,6 +3339,11 @@ function renderDocumentsList(documents, job) {
 }
 
 async function generateDocument(job, type) {
+  if (!canControlJob(job)) {
+    toast("Only an Administrator or the worker assigned to this job can generate legal/commercial documents.", "error");
+    return;
+  }
+
   const customer = jobCustomer(job);
   const devices = jobDevices(job);
   const payments = paymentsForJob(job.key);
@@ -3039,6 +3368,10 @@ async function generateDocument(job, type) {
       jobId: job.jobId || job.key,
       customerId: job.customerId || "",
       clientVisible: true,
+      immutable: true,
+      ownerName: job.ownerName || customer?.fullName || "",
+      assignedWorkerUid: job.assignedTo || "",
+      assignedWorkerName: staffName(job.assignedTo) || "",
       snapshot,
       createdAt: now(),
       createdBy: state.user.uid
@@ -3321,6 +3654,143 @@ async function previewAttachment(jobKey, attachmentId) {
 }
 
 
+
+function postPriorityRank(priority) {
+  return priority === "Critical" ? 0 : priority === "Urgent" ? 1 : 2;
+}
+
+function renderJobBoard(host) {
+  const posts = values(state.data.jobPosts)
+    .map(post => ({ ...post, effectiveStatus: effectivePostStatus(post) }))
+    .sort((a,b) => postPriorityRank(a.priority) - postPriorityRank(b.priority) || String(a.deadlineAt || "9999").localeCompare(String(b.deadlineAt || "9999")));
+
+  const available = posts.filter(post => post.effectiveStatus === "available");
+  const mine = posts.filter(post => post.claimedBy === state.user.uid && post.effectiveStatus === "claimed");
+  const history = posts.filter(post => !["available","claimed"].includes(post.effectiveStatus)).slice(0,40);
+
+  host.innerHTML = `
+    <div class="page-head">
+      <div><span class="eyebrow">Team work queue</span><h1>Job Board</h1><p>Post work with a deadline, or claim available work when you are ready to own it.</p></div>
+      <div class="head-actions">${isAdmin() ? `<button class="primary" id="postWorkBtn">${icon("plus",17)} Post work</button>` : ""}</div>
+    </div>
+
+    ${state.staff?.role === "worker" ? `<div class="notice info">Claim only work you can responsibly complete before its deadline. The first successful claim wins.</div>` : ""}
+
+    <div class="grid two" style="margin-top:14px">
+      <section class="panel">
+        <div class="panel-head"><div><h2>Available</h2><p>${available.length} open post${available.length===1?"":"s"}</p></div></div>
+        ${available.length ? available.map(post => jobPostCard(post)).join("") : emptyState("jobs","No available work","Nothing is currently open for claiming.")}
+      </section>
+
+      <section class="panel">
+        <div class="panel-head"><div><h2>${state.staff?.role === "worker" ? "My claimed work" : "Claimed"}</h2><p>Work already taken by a worker</p></div></div>
+        ${(state.staff?.role === "worker" ? mine : posts.filter(p=>p.effectiveStatus==="claimed")).length
+          ? (state.staff?.role === "worker" ? mine : posts.filter(p=>p.effectiveStatus==="claimed")).map(post=>jobPostCard(post)).join("")
+          : emptyState("check","Nothing claimed","Claimed work will appear here.")}
+      </section>
+    </div>
+
+    ${isAdmin() ? `<section class="panel"><div class="panel-head"><div><h2>Closed / expired</h2><p>Cancelled, expired and completed board posts</p></div></div>${history.length ? history.map(post=>jobPostCard(post)).join("") : emptyState("clock","No history yet","Closed board posts will appear here.")}</section>` : ""}
+  `;
+
+  document.getElementById("postWorkBtn")?.addEventListener("click", openPostWorkModal);
+  host.querySelectorAll("[data-claim-post]").forEach(button => button.onclick = () => claimJobPost(button.dataset.claimPost));
+  host.querySelectorAll("[data-cancel-post]").forEach(button => button.onclick = () => cancelJobPost(button.dataset.cancelPost));
+  host.querySelectorAll("[data-open-post-job]").forEach(button => button.onclick = () => navigate("job-detail", { jobKey: button.dataset.openPostJob }));
+}
+
+function jobPostCard(post) {
+  const status = post.effectiveStatus || effectivePostStatus(post);
+  const deadlineText = post.deadlineAt ? formatDate(post.deadlineAt, true) : "No deadline";
+  return `
+    <div class="board-card ${status}">
+      <div class="panel-head" style="margin-bottom:8px">
+        <div><strong>${esc(post.title || "Work item")}</strong><p>${esc(post.priority || "Normal")} priority · Deadline ${esc(deadlineText)}</p></div>
+        <span class="status-pill ${status === "available" ? "tone-brand-1" : status === "claimed" ? "tone-brand-3" : status === "cancelled" ? "tone-danger" : "tone-warning"}">${esc(status)}</span>
+      </div>
+      <p>${esc(post.instructions || "No additional instructions")}</p>
+      ${post.relatedJobKey ? `<p class="tiny muted">Linked recovery job: ${esc(post.relatedJobId || post.relatedJobKey)}</p>` : ""}
+      ${post.claimedBy ? `<p class="tiny"><strong>Claimed by:</strong> ${esc(post.claimedByName || staffName(post.claimedBy))}</p>` : ""}
+      <div class="head-actions" style="justify-content:flex-start;margin-top:10px">
+        ${state.staff?.role === "worker" && status === "available" ? `<button class="primary" data-claim-post="${post.key}">${icon("check",16)} Claim job</button>` : ""}
+        ${post.relatedJobKey && (post.claimedBy === state.user.uid || isAdmin()) ? `<button class="secondary" data-open-post-job="${esc(post.relatedJobKey)}">Open linked job</button>` : ""}
+        ${isAdmin() && ["available","claimed"].includes(status) ? `<button class="secondary danger" data-cancel-post="${post.key}">${icon("close",15)} Cancel</button>` : ""}
+      </div>
+    </div>`;
+}
+
+function openPostWorkModal() {
+  if (!isAdmin()) return;
+  const jobs = values(state.data.jobs)
+    .map(job => ({...job, key:job.key || job.jobId}))
+    .filter(job => !["Completed","Closed"].includes(job.status) && !job.assignedTo);
+  const body = `
+    <form id="postWorkForm">
+      <label class="field"><span>Work title *</span><input name="title" required placeholder="e.g. Assess customer drive and report findings"></label>
+      <label class="field"><span>Instructions *</span><textarea name="instructions" required></textarea></label>
+      <div class="form-grid three">
+        <label class="field"><span>Deadline *</span><input name="deadlineAt" type="datetime-local" required></label>
+        <label class="field"><span>Priority</span><select name="priority"><option>Normal</option><option>Urgent</option><option>Critical</option></select></label>
+        <label class="field"><span>Link recovery job</span><select name="relatedJobKey"><option value="">No linked job</option>${jobs.map(job=>`<option value="${job.key}">${esc(job.jobId || job.key)} · ${esc(jobDisplayName(job))}</option>`).join("")}</select></label>
+      </div>
+      <div class="notice info">If linked to a recovery job, the worker who claims this post becomes that job's assigned worker.</div>
+    </form>`;
+  openModal({title:"Post available work", subtitle:"Visible to active workers", body, actions:`<button class="secondary" data-modal-cancel>Cancel</button><button class="primary" id="saveWorkPost">${icon("check",17)} Post work</button>`});
+  modalHost.querySelector("[data-modal-cancel]").onclick=closeModal;
+  document.getElementById("saveWorkPost").onclick=async()=>{
+    const form=document.getElementById("postWorkForm"); if(!form.reportValidity()) return;
+    const data=new FormData(form); const relatedJobKey=data.get("relatedJobKey") || ""; const relatedJob=relatedJobKey ? jobByKey(relatedJobKey) : null;
+    const deadline = new Date(data.get("deadlineAt"));
+    if (deadline.getTime() <= now()) return toast("Choose a deadline in the future.","error");
+    const postRef=push(ref(db,"jobPosts"));
+    try{
+      await set(postRef,{title:data.get("title").trim(),instructions:data.get("instructions").trim(),deadlineAt:data.get("deadlineAt"),deadlineMs:deadline.getTime(),priority:data.get("priority"),relatedJobKey,relatedJobId:relatedJob?.jobId||"",status:"available",createdAt:now(),createdBy:state.user.uid,createdByName:profileDisplay()});
+      await recordAudit("posted","job board",postRef.key,data.get("title").trim()); closeModal(); toast("Work posted to the team.","success");
+    }catch(error){console.error(error);toast("Work could not be posted.","error");}
+  };
+}
+
+async function claimJobPost(postKey) {
+  const postRef = ref(db, `jobPosts/${postKey}`);
+  try {
+    const result = await runTransaction(postRef, current => {
+      if (!current || current.status !== "available") return;
+      if ((safeNumber(current.deadlineMs) || (current.deadlineAt ? new Date(current.deadlineAt).getTime() : 0)) < now()) return;
+      return {...current,status:"claimed",claimedBy:state.user.uid,claimedByName:profileDisplay(),claimedAt:now()};
+    });
+    if (!result.committed) return toast("That work is no longer available. Another worker may have claimed it.","error");
+    const post=result.snapshot.val();
+    if(post.relatedJobKey){
+      const jobSnap=await get(ref(db,`jobs/${post.relatedJobKey}`));
+      if(jobSnap.exists()){
+        const job=jobSnap.val();
+        if(job.assignedTo && job.assignedTo !== state.user.uid){
+          toast("The board post was claimed, but the linked job is already assigned. Ask Admin to resolve it.","error");
+        }else{
+          await update(ref(db,`jobs/${post.relatedJobKey}`),{assignedTo:state.user.uid,assignedToName:profileDisplay(),assignedAt:now(),assignedBy:state.user.uid,claimPostId:postKey,updatedAt:now()});
+        }
+      }
+    }
+    await recordAudit("claimed","job board",postKey,post.title||"Work item"); toast("Job claimed. It is now your responsibility.","success");
+  } catch(error){console.error(error);toast("The job could not be claimed.","error");}
+}
+
+function cancelJobPost(postKey) {
+  if(!isAdmin()) return;
+  const post=state.data.jobPosts?.[postKey]; if(!post) return;
+  const body=`<form id="cancelPostForm"><div class="notice warning">Cancelling removes this work from the active board. If it was claimed, the linked job will be unassigned when appropriate.</div><label class="field" style="margin-top:12px"><span>Reason for cancellation *</span><textarea id="cancelPostReason" minlength="5" required></textarea></label></form>`;
+  openModal({title:"Cancel posted work",subtitle:post.title||postKey,body,actions:`<button class="secondary" data-modal-cancel>Keep post</button><button class="primary danger" id="confirmCancelPost">Cancel work</button>`});
+  modalHost.querySelector("[data-modal-cancel]").onclick=closeModal;
+  document.getElementById("confirmCancelPost").onclick=async()=>{
+    const form=document.getElementById("cancelPostForm");if(!form.reportValidity())return;const reason=document.getElementById("cancelPostReason").value.trim();
+    try{
+      await update(ref(db,`jobPosts/${postKey}`),{status:"cancelled",cancelledAt:now(),cancelledBy:state.user.uid,cancelledByName:profileDisplay(),cancelReason:reason});
+      if(post.relatedJobKey && post.claimedBy){const job=jobByKey(post.relatedJobKey);if(job?.assignedTo===post.claimedBy){await update(ref(db,`jobs/${post.relatedJobKey}`),{assignedTo:"",assignedToName:"",assignedAt:now(),assignedBy:state.user.uid,updatedAt:now()});}}
+      await recordAudit("cancelled","job board",postKey,reason);closeModal();toast("Posted work cancelled.","success");
+    }catch(error){console.error(error);toast("Work could not be cancelled.","error");}
+  };
+}
+
 function renderTasks(host) {
   const allTasks = values(state.data.tasks)
     .filter(task => isAdmin() || task.assignedTo === state.user.uid)
@@ -3477,6 +3947,96 @@ function renderOutstandingJobs(jobs) {
     </div>`).join("")}</div>`;
 }
 
+
+function allWorkerLedgerEntries() {
+  if (state.staff?.role === "worker") {
+    return values(state.data.workerLedger).map(entry => ({...entry, ledgerOwnerUid: state.user.uid}));
+  }
+  const out = [];
+  Object.entries(state.data.workerLedger || {}).forEach(([uid, node]) => {
+    values(node || {}).forEach(entry => out.push({...entry, ledgerOwnerUid: uid}));
+  });
+  return out;
+}
+
+function ledgerEntriesForCurrentView() {
+  return allWorkerLedgerEntries().sort((a,b)=>(b.createdAt||0)-(a.createdAt||0));
+}
+
+function ledgerReview(entryId, ownerUid = "") {
+  if (state.staff?.role === "worker") return state.data.workerLedgerReviews?.[entryId] || {};
+  return state.data.workerLedgerReviews?.[ownerUid]?.[entryId] || {};
+}
+
+function renderWorkerLedger(host) {
+  const entries=ledgerEntriesForCurrentView();
+  const pending=entries.filter(entry=>!ledgerReview(entry.key, entry.ledgerOwnerUid).reconciledAt);
+  host.innerHTML=`
+    <div class="page-head">
+      <div><span class="eyebrow">Immutable money declarations</span><h1>${state.staff?.role === "worker" ? "My Expenses & Money" : "Worker Expenses & Money"}</h1><p>Original worker declarations stay unchanged; Finance/Admin reconcile them separately.</p></div>
+      <div class="head-actions">${state.staff?.role === "worker" ? `<button class="primary" id="newLedgerEntry">${icon("plus",17)} Record expense / money</button>` : ""}</div>
+    </div>
+    <div class="notice warning">Customer payments should normally go through the company/Finance channel. Use a personal-money declaration only when a worker actually handled the funds. Never record passwords, PINs, OTPs or full card details.</div>
+    <div class="grid three" style="margin-top:14px">
+      ${statCard("Entries",entries.length,"receipt","Immutable declarations")}
+      ${statCard("Awaiting reconciliation",pending.length,"clock","Finance/Admin review")}
+      ${statCard("Reconciled",entries.length-pending.length,"check","Reviewed separately")}
+    </div>
+    <section class="panel" style="margin-top:14px">
+      <div class="panel-head"><div><h2>Declarations</h2><p>${state.staff?.role === "worker" ? "Your submitted records" : "All worker-submitted records"}</p></div></div>
+      ${entries.length ? `<div class="list">${entries.map(ledgerRowHtml).join("")}</div>` : emptyState("receipt","No declarations yet","Worker expenses or personally received customer money will appear here.")}
+    </section>`;
+  document.getElementById("newLedgerEntry")?.addEventListener("click", openWorkerLedgerModal);
+  host.querySelectorAll("[data-review-ledger]").forEach(button=>button.onclick=()=>openLedgerReviewModal(button.dataset.reviewLedger, button.dataset.reviewOwner));
+}
+
+function ledgerRowHtml(entry){
+  const review=ledgerReview(entry.key, entry.ledgerOwnerUid); const type=entry.type === "customer-money" ? "Customer money received" : "Worker expense";
+  return `<div class="list-row">
+    <div class="list-icon">${icon(entry.type === "customer-money" ? "finance" : "receipt",18)}</div>
+    <div class="list-main"><strong>${formatMoney(entry.amount)} · ${esc(type)}</strong><span>${esc(entry.item || entry.description || "")}${entry.jobId ? ` · ${esc(entry.jobId)}` : ""} · ${esc(entry.createdByName || staffName(entry.createdBy))} · ${formatDate(entry.transactionDate || entry.createdAt)}</span></div>
+    <div class="list-side">${review.reconciledAt ? `<span class="status-pill tone-brand-4">${esc(review.status || "Reconciled")}</span>` : `<span class="status-pill tone-warning">Pending</span>`}${(isAdmin() || state.staff?.role === "finance") ? `<button class="secondary" data-review-ledger="${entry.key}" data-review-owner="${esc(entry.ledgerOwnerUid || entry.createdBy || "")}">${review.reconciledAt ? "Review" : "Reconcile"}</button>` : ""}</div>
+  </div>`;
+}
+
+function openWorkerLedgerModal(){
+  if(state.staff?.role !== "worker") return;
+  const jobs=values(state.data.jobs).map(job=>({...job,key:job.key||job.jobId})).filter(job=>job.assignedTo===state.user.uid || (!job.assignedTo && job.createdBy===state.user.uid));
+  const body=`<form id="workerLedgerForm">
+    <label class="field"><span>What are you recording? *</span><select name="type" id="ledgerType"><option value="expense">Expense I paid</option><option value="customer-money">Customer money I personally received</option></select></label>
+    <div class="form-grid three">
+      <label class="field"><span>Item / purpose *</span><input name="item" required placeholder="e.g. courier fee, replacement cable"></label>
+      <label class="field"><span>Amount (₦) *</span><input name="amount" type="number" min="1" required></label>
+      <label class="field"><span>Transaction date *</span><input name="transactionDate" type="date" required></label>
+      <label class="field"><span>Payment method</span><select name="method"><option>Bank Transfer</option><option>Cash</option><option>POS</option><option>Other</option></select></label>
+      <label class="field"><span>Related job</span><select name="jobKey"><option value="">Not linked to a job</option>${jobs.map(job=>`<option value="${job.key}">${esc(job.jobId||job.key)} · ${esc(jobDisplayName(job))}</option>`).join("")}</select></label>
+      <label class="field"><span>Reference</span><input name="reference" placeholder="Transaction/reference ID if available"></label>
+    </div>
+    <div id="personalAccountFields" style="display:none">
+      <div class="form-grid two"><label class="field"><span>Receiving account label</span><input name="accountLabel" placeholder="e.g. Samuel personal account"></label><label class="field"><span>Account last 4 digits</span><input name="accountLast4" inputmode="numeric" maxlength="4" pattern="[0-9]{4}" placeholder="1234"></label></div>
+      <div class="notice warning">Do not store a full card number, PIN, password, CVV or OTP in RecoveryDesk.</div>
+    </div>
+    <label class="field"><span>Explanation *</span><textarea name="description" required placeholder="Explain why you personally handled this money and what it was used for."></textarea></label>
+    <div class="notice info">Once submitted, you cannot edit or delete this original declaration. Finance/Admin will reconcile it separately.</div>
+  </form>`;
+  openModal({title:"Record worker money",subtitle:profileDisplay(),body,actions:`<button class="secondary" data-modal-cancel>Cancel</button><button class="primary" id="submitLedgerEntry">${icon("shield",17)} Submit immutable record</button>`});
+  modalHost.querySelector("[data-modal-cancel]").onclick=closeModal;
+  const type=document.getElementById("ledgerType"), account=document.getElementById("personalAccountFields");
+  type.onchange=()=>account.style.display=type.value==="customer-money"?"block":"none";
+  document.getElementById("submitLedgerEntry").onclick=async()=>{
+    const form=document.getElementById("workerLedgerForm");if(!form.reportValidity())return;const data=new FormData(form);const jobKey=data.get("jobKey")||"";const job=jobKey?jobByKey(jobKey):null;const entryRef=push(ref(db,`workerLedger/${state.user.uid}`));
+    try{await set(entryRef,{type:data.get("type"),item:data.get("item").trim(),amount:safeNumber(data.get("amount")),transactionDate:data.get("transactionDate"),method:data.get("method"),jobKey,jobId:job?.jobId||"",customerId:job?.customerId||"",reference:String(data.get("reference")||"").trim(),accountLabel:data.get("type")==="customer-money"?String(data.get("accountLabel")||"").trim():"",accountLast4:data.get("type")==="customer-money"?String(data.get("accountLast4")||"").trim():"",description:data.get("description").trim(),createdAt:now(),createdBy:state.user.uid,createdByName:profileDisplay(),immutable:true,testRecord:Boolean(job?.testRecord)});await recordAudit("declared worker money","worker ledger",entryRef.key,`${data.get("type")} · ${formatMoney(data.get("amount"))}`);closeModal();toast("Declaration submitted. The original is now locked.","success");}catch(error){console.error(error);toast("Declaration could not be submitted.","error");}
+  };
+}
+
+function openLedgerReviewModal(entryId, ownerUid){
+  if(!(isAdmin() || state.staff?.role === "finance")) return;
+  const entry=state.data.workerLedger?.[ownerUid]?.[entryId]; if(!entry)return; const existing=ledgerReview(entryId, ownerUid);
+  const body=`<div class="grid two">${detailTile("Worker",entry.createdByName||staffName(entry.createdBy))}${detailTile("Amount",formatMoney(entry.amount))}</div><div class="notice info" style="margin-top:12px">This review does not rewrite the worker's original declaration.</div><form id="ledgerReviewForm" style="margin-top:12px"><label class="field"><span>Review status</span><select id="ledgerReviewStatus"><option ${existing.status==="Reconciled"?"selected":""}>Reconciled</option><option ${existing.status==="Needs clarification"?"selected":""}>Needs clarification</option><option ${existing.status==="Rejected"?"selected":""}>Rejected</option></select></label><label class="field"><span>Finance/Admin note *</span><textarea id="ledgerReviewNote" required>${esc(existing.note||"")}</textarea></label></form>`;
+  openModal({title:"Review worker declaration",subtitle:entry.item||entryId,body,actions:`<button class="secondary" data-modal-cancel>Cancel</button><button class="primary" id="saveLedgerReview">${icon("check",17)} Save review</button>`}); modalHost.querySelector("[data-modal-cancel]").onclick=closeModal;
+  document.getElementById("saveLedgerReview").onclick=async()=>{const form=document.getElementById("ledgerReviewForm");if(!form.reportValidity())return;try{await set(ref(db,`workerLedgerReviews/${ownerUid}/${entryId}`),{status:document.getElementById("ledgerReviewStatus").value,note:document.getElementById("ledgerReviewNote").value.trim(),reconciledAt:now(),reconciledBy:state.user.uid,reconciledByName:profileDisplay()});await recordAudit("reviewed worker money","worker ledger",entryId,document.getElementById("ledgerReviewStatus").value);closeModal();toast("Worker declaration reviewed.","success");}catch{toast("Review could not be saved.","error");}};
+}
+
 function renderFinance(host) {
   const payments = values(state.data.payments).filter(payment => payment.status !== "void");
   const expenses = values(state.data.expenses).filter(expense => expense.status !== "void");
@@ -3507,6 +4067,11 @@ function renderFinance(host) {
       ${financeCard("Expenses this month", monthExpenses, "negative", "Month-to-date operational expenses")}
       ${financeCard("Outstanding", outstanding, "", "Expected charges not yet recorded paid")}
     </div>
+
+    <section class="panel" style="margin-top:14px">
+      <div class="panel-head"><div><h2>Worker money awaiting review</h2><p>Immutable worker declarations that Finance/Admin should reconcile separately.</p></div><button class="secondary" id="openWorkerExpenses">Open expenses</button></div>
+      ${pendingLedgerCount() ? `<div class="notice warning">${pendingLedgerCount()} worker declaration${pendingLedgerCount()===1?" is":"s are"} awaiting review.</div>` : `<div class="notice success">No worker money declarations are waiting for review.</div>`}
+    </section>
 
     <section class="panel" style="margin-top:14px">
       <div class="panel-head"><div><h2>All-time operational summary</h2><p>Recorded in RecoveryDesk since V2 finance tracking began.</p></div></div>
@@ -3561,6 +4126,7 @@ function renderFinance(host) {
     </section>`;
 
   document.getElementById("addExpenseBtn").onclick = openExpenseModal;
+  document.getElementById("openWorkerExpenses")?.addEventListener("click", () => navigate("expenses"));
   host.querySelectorAll("[data-reconcile-payment]").forEach(button => {
     button.onclick = async () => {
       const key = button.dataset.reconcilePayment;
@@ -3889,6 +4455,59 @@ function serviceTile(label, status, text) {
     </div>`;
 }
 
+
+function looksLikeTestText(value="") {
+  return /\b(test|dummy|sample)\b/i.test(String(value));
+}
+
+function collectTestData() {
+  const customerIds = new Set(values(state.data.customers).filter(c => c.testRecord === true || looksLikeTestText(c.fullName) || looksLikeTestText(c.email) || looksLikeTestText(c.address) || ["08000000000","00000000000"].includes(normalizePhone(c.phone))).map(c=>c.key));
+  const jobs = values(state.data.jobs).filter(j => j.testRecord === true || customerIds.has(j.customerId) || looksLikeTestText(j.customerNameSnapshot) || looksLikeTestText(j.clientName));
+  const jobKeys = new Set(jobs.map(j=>j.key));
+  const deviceIds = new Set(values(state.data.devices).filter(d => d.testRecord === true || customerIds.has(d.customerId)).map(d=>d.key));
+  const documentIds = new Set(values(state.data.documents).filter(d => d.testRecord === true || customerIds.has(d.customerId) || jobKeys.has(d.jobKey)).map(d=>d.key));
+  const paymentIds = new Set(values(state.data.payments).filter(p => customerIds.has(p.customerId) || jobKeys.has(p.jobKey) || p.testRecord === true).map(p=>p.key));
+  const taskIds = new Set(values(state.data.tasks).filter(t => customerIds.has(t.customerId) || jobKeys.has(t.jobKey) || t.testRecord === true).map(t=>t.key));
+  const ledgerIds = new Set(allWorkerLedgerEntries().filter(e => e.testRecord === true || customerIds.has(e.customerId) || jobKeys.has(e.jobKey)).map(e=>`${e.ledgerOwnerUid}:${e.key}`));
+  const postIds = new Set(values(state.data.jobPosts).filter(p => p.testRecord === true || jobKeys.has(p.relatedJobKey) || looksLikeTestText(p.title)).map(p=>p.key));
+  return {customerIds,jobKeys,deviceIds,documentIds,paymentIds,taskIds,ledgerIds,postIds};
+}
+
+function testDataCount(bundle=collectTestData()) {
+  return bundle.customerIds.size + bundle.jobKeys.size + bundle.deviceIds.size + bundle.documentIds.size + bundle.paymentIds.size + bundle.taskIds.size + bundle.ledgerIds.size + bundle.postIds.size;
+}
+
+function openTestDataCleanup() {
+  if(!isOwner()) return;
+  const bundle=collectTestData(); const count=testDataCount(bundle);
+  if(!count) return toast("No obvious test/dummy records were detected.","success");
+  const names=[...bundle.customerIds].map(id=>`${id} · ${state.data.customers[id]?.fullName||"Customer"}`);
+  const body=`<div class="notice danger"><strong>Owner-only destructive action.</strong> RecoveryDesk detected records marked as test/dummy or clearly named Test/Dummy/Sample. Real records are not selected automatically.</div><div class="panel flat" style="margin-top:12px"><strong>${count} linked test record${count===1?"":"s"}</strong><p class="tiny muted">Customers: ${bundle.customerIds.size} · Jobs: ${bundle.jobKeys.size} · Devices: ${bundle.deviceIds.size} · Documents: ${bundle.documentIds.size} · Payments: ${bundle.paymentIds.size} · Tasks: ${bundle.taskIds.size} · Worker money: ${bundle.ledgerIds.size}</p>${names.length?`<p class="tiny">${names.map(esc).join("<br>")}</p>`:""}</div><label class="field"><span>Type DELETE TEST DATA to confirm *</span><input id="cleanupPhrase" autocomplete="off"></label>`;
+  openModal({title:"Delete test/dummy data",subtitle:"Owner Administrator",body,actions:`<button class="secondary" data-modal-cancel>Cancel</button><button class="primary danger" id="confirmTestCleanup">Delete test data</button>`});modalHost.querySelector("[data-modal-cancel]").onclick=closeModal;
+  document.getElementById("confirmTestCleanup").onclick=async()=>{if(document.getElementById("cleanupPhrase").value.trim()!=="DELETE TEST DATA")return toast("Confirmation phrase does not match.","error");const button=document.getElementById("confirmTestCleanup");setBusy(button,true,"Deleting test data…");try{await deleteTestDataBundle(bundle);closeModal();toast("Test/dummy records removed.","success");}catch(error){console.error(error);toast("Cleanup stopped because an error occurred. Real records were not selected by this tool.","error");setBusy(button,false);}};
+}
+
+async function deleteTestDataBundle(bundle){
+  // Mark selected parents first so immutable-child rules can verify this is test cleanup.
+  for(const id of bundle.customerIds){await update(ref(db,`customers/${id}`),{testRecord:true});}
+  for(const key of bundle.jobKeys){await update(ref(db,`jobs/${key}`),{testRecord:true});}
+
+  for(const id of bundle.documentIds){await remove(ref(db,`documents/${id}`));}
+  for(const key of bundle.jobKeys){
+    await remove(ref(db,`jobEdits/${key}`));
+    await remove(ref(db,`attachments/${key}`));
+  }
+  for(const compound of bundle.ledgerIds){const [uid,id]=compound.split(":");await remove(ref(db,`workerLedgerReviews/${uid}/${id}`));await remove(ref(db,`workerLedger/${uid}/${id}`));}
+  for(const id of bundle.postIds){await remove(ref(db,`jobPosts/${id}`));}
+  for(const id of bundle.paymentIds){await remove(ref(db,`payments/${id}`));}
+  for(const id of bundle.taskIds){await remove(ref(db,`tasks/${id}`));}
+  for(const customerId of bundle.customerIds){await remove(ref(db,`communications/${customerId}`));await remove(ref(db,`customerJobs/${customerId}`));await remove(ref(db,`customerDevices/${customerId}`));}
+  for(const id of bundle.deviceIds){await remove(ref(db,`devices/${id}`));}
+  for(const key of bundle.jobKeys){await remove(ref(db,`jobs/${key}`));}
+  for(const id of bundle.customerIds){await remove(ref(db,`customers/${id}`));}
+  await recordAudit("deleted test data","system","test-cleanup",`${testDataCount(bundle)} linked test records removed by Owner`);
+}
+
 function renderSettings(host) {
   const c = company();
   const legacy = values(state.data.jobs).filter(job => !job.customerId);
@@ -3991,6 +4610,19 @@ function renderSettings(host) {
         </div>
       </section>
 
+
+      <section class="panel">
+        <div class="panel-head"><div><h2>Required training</h2><p>First visit to each tab requires a short role-specific lesson. It cannot be skipped.</p></div></div>
+        <button class="secondary" id="replayTrainingBtn">${icon("audit",17)} Replay all my training</button>
+      </section>
+
+      ${isOwner() ? `
+      <section class="panel">
+        <div class="panel-head"><div><h2>Test Data Cleanup</h2><p>Owner-only cleanup for records explicitly marked test/dummy or clearly named Test/Dummy/Sample.</p></div><span class="status-pill ${testDataCount()?"tone-warning":"tone-brand-4"}">${testDataCount()}</span></div>
+        <div class="notice warning">This is deliberately protected. RecoveryDesk will show the detected linked records and require the exact phrase DELETE TEST DATA before removal.</div>
+        <button class="primary danger" style="margin-top:12px" id="cleanupTestDataBtn" ${testDataCount()?"":"disabled"}>${icon("trash",17)} Delete detected test data</button>
+      </section>` : ""}
+
       <section class="panel">
         <div class="panel-head">
           <div>
@@ -4079,6 +4711,11 @@ function renderSettings(host) {
   });
 
   document.getElementById("syncAllAccessMirrors")?.addEventListener("click", syncAllAccessMirrors);
+  document.getElementById("replayTrainingBtn")?.addEventListener("click", async () => {
+    try { await remove(ref(db, `training/${state.user.uid}`)); toast("Training reset. The required lessons will play again as you open each tab.", "success"); navigate("dashboard"); }
+    catch { toast("Training could not be reset.", "error"); }
+  });
+  document.getElementById("cleanupTestDataBtn")?.addEventListener("click", openTestDataCleanup);
   document.getElementById("migrateLegacyJobs")?.addEventListener("click", migrateLegacyJobs);
 }
 

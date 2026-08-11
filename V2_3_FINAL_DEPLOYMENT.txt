@@ -1,0 +1,28 @@
+RECOVERYDESK V2.3 FINAL DEPLOYMENT
+
+A. FIREBASE RULES FIRST
+1. Firebase Console -> Realtime Database -> Rules.
+2. Replace all current rules with database.rules.json from this V2.3 Final package.
+3. Publish and make sure Firebase reports no errors.
+
+B. BACK UP CURRENT LIVE CODE
+4. GitHub -> Branches -> create a branch from main named v2.2-backup (or another clear backup name if that already exists).
+5. Return to main.
+
+C. DEPLOY CODE
+6. Add file -> Upload files.
+7. Upload the files INSIDE the V2.3 Final folder, replacing matching files.
+8. Commit directly to main.
+   Title: Deploy RecoveryDesk V2.3 Final
+   Description: Finalize job board, immutable worker expenses, required role training, owner test-data cleanup, and job/legal record controls.
+9. Wait for GitHub Actions / Pages deployment to show green.
+
+D. REFRESH
+10. Desktop: Ctrl+Shift+R.
+11. Phone PWA: fully close it, open the website once in Chrome, then reopen the installed PWA.
+
+E. TEST BEFORE REAL USE
+12. Owner: complete required tab training, post/cancel work, test dummy cleanup on only dummy data.
+13. Worker: claim work, submit a job, try a submitted edit reason, record an expense declaration.
+14. Finance: confirm operations are read-only, review/reconcile worker declaration, reconcile payment.
+15. Do not enable required intake photos until Firebase Storage is actually active.

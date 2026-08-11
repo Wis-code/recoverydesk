@@ -1403,3 +1403,13 @@ td.right, th.right { text-align: right; }
 }
 
 /* V2.1 role-focused refinements */
+
+
+/* V2.3 Final: mandatory contextual training */
+.training-backdrop{position:fixed;inset:0;z-index:10000;background:rgba(4,12,8,.82);display:grid;place-items:center;padding:18px;backdrop-filter:blur(8px)}
+.training-modal{width:min(520px,100%);background:var(--surface);border:1px solid var(--line);border-radius:22px;padding:24px;box-shadow:0 28px 90px rgba(0,0,0,.35)}
+.training-brand{display:flex;align-items:center;gap:10px;font-size:12px;color:var(--muted);margin-bottom:18px}.training-brand img{width:34px;height:34px;border-radius:9px}
+.training-animation{height:120px;display:grid;place-items:center;position:relative;color:var(--brand);margin-bottom:14px}.training-animation svg{position:relative;z-index:3;animation:trainingFloat 1.8s ease-in-out infinite}.training-animation span{position:absolute;width:76px;height:76px;border-radius:50%;border:2px solid color-mix(in srgb,var(--brand) 35%,transparent);animation:trainingPulse 1.8s ease-out infinite}.training-animation span:nth-child(3){animation-delay:.6s}
+.training-modal h2{font-size:26px;margin:8px 0}.training-modal p{color:var(--muted);line-height:1.6}.training-progress{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin:18px 0}.training-progress span{height:5px;background:var(--line);border-radius:9px}.training-progress span.done{background:var(--brand)}
+@keyframes trainingPulse{0%{transform:scale(.6);opacity:.8}100%{transform:scale(1.8);opacity:0}}@keyframes trainingFloat{0%,100%{transform:translateY(0)}50%{transform:translateY(-8px)}}
+.board-card{border:1px solid var(--line);border-radius:15px;padding:14px;margin-bottom:10px;background:var(--surface-2)}.board-card.available{border-left:4px solid var(--brand)}.board-card.claimed{border-left:4px solid #25a562}.board-card.cancelled{opacity:.75;border-left:4px solid #c74949}.board-card.expired{opacity:.8;border-left:4px solid #c98b2e}

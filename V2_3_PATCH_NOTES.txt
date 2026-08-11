@@ -1,0 +1,39 @@
+RECOVERYDESK V2.3 — JOB INTEGRITY & LEGAL RECORD HOTFIX
+
+CORE RULE
+Only these people can change an entered recovery job:
+- Owner / Administrator / Sub-Administrator
+- The Worker currently assigned to that specific job
+
+Finance and every other Worker get read-only operational job records.
+
+WORKER SUBMISSION LOCK
+- New jobs begin as Draft.
+- The assigned Worker can press "Submit job record".
+- After submission, the Worker can no longer silently alter it.
+- Every later Worker edit requires a written reason of at least 10 characters.
+- RecoveryDesk stores the reason, worker identity, timestamp, and before/after values in jobEdits and Audit.
+- This is enforced both in the UI and Realtime Database Security Rules.
+
+LEGAL / COMMERCIAL DOCUMENTS
+- Finance cannot generate agreements, invoices or receipts for a job.
+- Other Workers cannot generate documents for someone else's job.
+- Administrator/Sub-Administrator/Owner or the assigned Worker can generate documents.
+- Every generated document is an immutable snapshot.
+- Database rules allow document creation only; existing document records cannot be overwritten or deleted.
+- Corrections therefore create a new document/version rather than rewriting the old legal record.
+- Job pages clearly show Device Owner, Customer, Signer and Assigned Worker.
+
+PAYMENTS
+- Finance can still record/reconcile payments.
+- An assigned Worker can record payments for their own job.
+- Other Workers cannot alter payments for that job.
+
+IMPORTANT
+The warning inside the app says submitted-record edits are auditable and may have legal/compliance consequences if changed inaccurately. RecoveryDesk records accountability; it does not itself determine legal liability.
+
+DEPLOYMENT
+1. Publish database.rules.json first.
+2. Then deploy all V2.3 files to GitHub main.
+3. Wait for GitHub Pages green check.
+4. Force refresh / reopen the PWA.

@@ -1,0 +1,49 @@
+RECOVERYDESK V2.3 FINAL
+
+This is the final planned V2.3 feature release. Future changes should be driven by real user feedback, security issues, or operational needs.
+
+FINAL ADDITIONS
+- General Job Board for Admin/Sub-Admin/Owner to post work
+- Work posts include deadline, priority, instructions and optional linked recovery job
+- Active Workers can claim available work; first successful claim wins
+- Claimed linked recovery jobs are assigned to the claiming Worker
+- Admin can cancel board posts and unassign linked work when appropriate
+- Worker Expenses & Money declarations
+- Worker declarations cover personal expenses or customer money personally received
+- Worker declarations are immutable after submission
+- Finance/Admin review/reconcile worker declarations in a separate review record
+- Full banking secrets are deliberately not collected; only account label and last 4 digits are supported
+- Mandatory first-visit education for every top-level tab, including Owner/Admin
+- Training is role-aware and cannot be skipped the first time
+- Training completion follows the user's account across devices
+- Settings includes Replay All Training
+- Owner-only Test Data Cleanup
+- New test customers can be explicitly marked as dummy/test records
+- Cleanup detects marked or clearly named Test/Dummy/Sample records, shows counts, and requires DELETE TEST DATA confirmation
+- Job/device/document/payment/task/worker-money test records are removed as a linked cleanup set
+
+ALREADY INCLUDED IN V2.3
+- Worker job ownership and server-side edit restrictions
+- Submitted-job edit reasons with before/after audit history
+- Owner/Admin/Sub-Admin job controls
+- Finance operational read-only separation
+- Immutable generated legal/commercial document snapshots
+- Owner/customer/signer/assigned-worker clarity on job records
+- Payment reconciliation
+- Password reset and email/password change flow
+- Email update / email invoice compose workflow without Firebase Storage billing
+- Customer follow-up and milestone communication records
+- Owner Administrator and Sub-Administrator hierarchy
+
+STORAGE / AUTOMATIC EMAIL LIMITATIONS
+Firebase Storage photo/signature/profile-image uploads remain dormant until billing is resolved.
+The current email buttons open the user's configured email app with customer details/message prepared. True unattended automatic email delivery still needs a trusted mail backend/provider.
+
+DEPLOYMENT ORDER
+1. Publish database.rules.json from this package first.
+2. Create a GitHub backup branch from the current main branch.
+3. Upload/replace all files from this package on main.
+4. Commit as: Deploy RecoveryDesk V2.3 Final
+5. Wait for GitHub Pages deployment to turn green.
+6. Force refresh desktop and reopen the installed phone PWA.
+7. Test Owner, Worker and Finance accounts before using real customer data.
