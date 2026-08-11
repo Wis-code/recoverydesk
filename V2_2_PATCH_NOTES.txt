@@ -1,0 +1,37 @@
+RECOVERYDESK V2.2 HOTFIX
+
+Immediate fixes:
+1. Worker job ownership
+   - New jobs are assigned to their creator by default.
+   - Workers can edit only jobs assigned to them.
+   - Other workers may still view jobs, but technical controls are read-only.
+   - Administrator/Sub-Administrator/Owner can reassign jobs.
+   - Reassignment is written to Audit.
+
+2. Finance separation
+   - Finance remains read-only for operational jobs/customers/devices.
+   - Finance keeps payments, reconciliation, expenses and finance views.
+
+3. Password sign-in
+   - Email/password sign-in remains available.
+   - Forgot password sends Firebase Authentication reset email.
+   - Email/password users can change password from Settings.
+   - Google sign-in users manage their Google password with Google.
+
+4. Email without Firebase billing
+   - Job page has "Email update".
+   - Documents section has "Email invoice".
+   - These open the device's configured email client with the customer, subject and message prefilled.
+   - Save/Print the RecoveryDesk invoice as PDF and attach it before sending.
+   - This works without Firebase Storage/Blaze.
+
+IMPORTANT LIMITATION
+True automatic sending in the background still requires a trusted backend/email service.
+Do not put an SMTP password or private email API key inside GitHub Pages JavaScript.
+Firebase's Trigger Email extension cannot be installed while the Firebase project remains on Spark; Firebase Extensions require Blaze.
+
+DEPLOYMENT ORDER
+- Publish database.rules.json first.
+- Then upload the V2.2 files to GitHub main.
+- Wait for green GitHub Pages deployment.
+- Force refresh the browser/PWA.

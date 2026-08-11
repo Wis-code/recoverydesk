@@ -774,7 +774,7 @@ function renderAuth() {
 
       <section class="auth-side">
         <form class="auth-card" id="authForm">
-          <span class="eyebrow">${signup ? "Create account" : "Staff & client access"}</span>
+          <span class="eyebrow">${signup ? "Create account" : "Google or email/password sign-in"}</span>
           <h2>${signup ? "Create your sign-in" : "Welcome back"}</h2>
           <p>${signup ? "Your account still needs Staff/Admin authorization or customer linking before it can access records." : "Sign in to continue to RecoveryDesk."}</p>
 
@@ -1222,7 +1222,11 @@ function dashboardJobsScope(allJobs) {
       .map(task => task.jobKey));
     const merged = new Map();
     allJobs
-      .filter(job => job.createdBy === state.user.uid || assignedJobKeys.has(job.key || job.jobId))
+      .filter(job =>
+        job.assignedTo === state.user.uid ||
+        (!job.assignedTo && job.createdBy === state.user.uid) ||
+        assignedJobKeys.has(job.key || job.jobId)
+      )
       .forEach(job => merged.set(job.key || job.jobId, job));
     return [...merged.values()];
   }
@@ -2393,6 +2397,10 @@ async function saveIntake() {
       assessmentResult: "Pending",
       recoveryQuote: 0,
       status: ready ? "Ready for Assessment" : "Intake Pending",
+      assignedTo: state.user.uid,
+      assignedToName: profileDisplay(),
+      assignedAt: now(),
+      assignedBy: state.user.uid,
       createdAt: now(),
       createdBy: state.user.uid,
       updatedAt: now()
@@ -2453,6 +2461,56 @@ async function saveIntake() {
 }
 
 
+
+function openMailComposer({ to = "", subject = "", body = "" }) {
+  if (!to) {
+    toast("This customer does not have an email address saved.", "error");
+    return;
+  }
+
+  const href = `mailto:${encodeURIComponent(to)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+  window.location.href = href;
+}
+
+function emailJobUpdate(job) {
+  const customer = jobCustomer(job);
+  openMailComposer({
+    to: customer?.email || "",
+    subject: `${company().name} · ${job.jobId || job.key} · ${job.status}`,
+    body:
+`Hello ${customer?.fullName || "Customer"},
+
+Your data recovery job ${job.jobId || job.key} has reached this stage:
+
+${job.status}
+
+You can contact WISCODE INNOVATIONS LTD if you need clarification.
+
+Regards,
+${company().name}`
+  });
+}
+
+function emailInvoiceNotice(job) {
+  const customer = jobCustomer(job);
+  openMailComposer({
+    to: customer?.email || "",
+    subject: `${company().name} invoice · ${job.jobId || job.key}`,
+    body:
+`Hello ${customer?.fullName || "Customer"},
+
+Your invoice for data recovery job ${job.jobId || job.key} is ready.
+
+Please attach the PDF generated from RecoveryDesk before sending this email.
+
+Job: ${job.jobId || job.key}
+Outstanding balance: ${formatMoney(outstandingForJob(job))}
+
+Regards,
+${company().name}`
+  });
+}
+
 function staffName(uid) {
   const profile = state.data.users?.[uid];
   return profile?.displayName || profile?.realName || profile?.name || "staff";
@@ -2487,6 +2545,7 @@ function renderJobDetail(host) {
       </div>
       <div class="head-actions">
         ${isOps() ? `<button class="secondary" id="jobTaskBtn">${icon("tasks",17)} Add task</button>` : ""}
+        <button class="secondary" id="jobEmailUpdateBtn">${icon("file",17)} Email update</button>
         <button class="secondary" id="jobAgreementBtn">${icon("signature",17)} Agreement</button>
         <button class="primary" id="jobInvoiceBtn">${icon("receipt",17)} Invoice</button>
       </div>
@@ -2534,6 +2593,7 @@ function renderJobDetail(host) {
           ${detailInfo("Signed by", job.signerName || customer?.fullName || "—")}
           ${detailInfo("Signer authority", job.signerAuthority || "—")}
           ${detailInfo("Received", formatDate(job.createdAt, true))}
+          ${detailInfo("Assigned worker", staffName(job.assignedTo) || (job.createdBy ? staffName(job.createdBy) : "Unassigned"))}
         </div>
       </section>
 
@@ -2547,7 +2607,7 @@ function renderJobDetail(host) {
             : `Recovery quote is ${formatMoney(job.recoveryQuote)}. ${job.status === "Awaiting Approval" ? "Customer approval is still pending." : "Move the job to Awaiting Approval when the quote is ready for the customer."}`}
           ${isOps() && job.status === "Awaiting Approval" && !job.quoteApproval?.approved ? `<div style="margin-top:9px"><button class="secondary" id="confirmLocalQuoteApproval">${icon("check",16)} Confirm local customer approval</button></div>` : ""}
         </div>` : ""}
-        ${isOps() ? `
+        ${isOps() && (state.staff?.role !== "worker" || job.assignedTo === state.user.uid || (!job.assignedTo && job.createdBy === state.user.uid)) ? `
           <div class="form-grid">
             <label class="field"><span>Status</span>
               <select id="jobStatus">${JOB_STATUSES.map(status => `<option ${job.status === status ? "selected" : ""}>${status}</option>`).join("")}</select>
@@ -2601,6 +2661,7 @@ function renderJobDetail(host) {
         <div class="panel-head">
           <div><h2>Documents</h2><p>Invoices, receipts and the service agreement</p></div>
           <div class="head-actions">
+            <button class="secondary" id="emailInvoiceNotice">${icon("file",16)} Email invoice</button>
             <button class="secondary" id="generateAgreement">${icon("signature",16)} Agreement</button>
             <button class="secondary" id="generateInvoice">${icon("receipt",16)} Invoice</button>
           </div>
@@ -2626,8 +2687,10 @@ function renderJobDetail(host) {
   document.getElementById("jobReceiptBtn")?.addEventListener("click", () => generateDocument(job, "receipt"));
   document.getElementById("jobTaskBtn")?.addEventListener("click", () => openTaskModal(job));
   document.getElementById("jobTaskBtn2")?.addEventListener("click", () => openTaskModal(job));
+  document.getElementById("jobEmailUpdateBtn").onclick = () => emailJobUpdate(job);
   document.getElementById("jobAgreementBtn").onclick = () => generateDocument(job, "agreement");
   document.getElementById("jobInvoiceBtn").onclick = () => generateDocument(job, "invoice");
+  document.getElementById("emailInvoiceNotice").onclick = () => emailInvoiceNotice(job);
   document.getElementById("generateAgreement").onclick = () => generateDocument(job, "agreement");
   document.getElementById("generateInvoice").onclick = () => generateDocument(job, "invoice");
   document.getElementById("uploadSignedAgreement")?.addEventListener("click", () => openAttachmentModal(job, "signed-agreement"));
@@ -2731,6 +2794,14 @@ function renderJobDeviceCard(job, device) {
 }
 
 async function saveJobControls(job) {
+  if (state.staff?.role === "worker") {
+    const ownsJob = job.assignedTo === state.user.uid || (!job.assignedTo && job.createdBy === state.user.uid);
+    if (!ownsJob) {
+      toast("This job is assigned to another worker. Ask an Administrator to reassign it.", "error");
+      return;
+    }
+  }
+
   const button = document.getElementById("saveJobControls");
   setBusy(button, true, "Saving…");
 
@@ -2766,6 +2837,14 @@ async function saveJobControls(job) {
       });
     }
 
+    if (isAdmin() && (job.assignedTo || "") !== (patch.assignedTo || "")) {
+      await recordAudit(
+        "reassigned",
+        "job",
+        job.jobId || job.key,
+        `${staffName(job.assignedTo) || "Unassigned"} → ${staffName(patch.assignedTo) || "Unassigned"}`
+      );
+    }
     await recordAudit("updated", "job", job.jobId || job.key, `Status: ${patch.status}; assessment: ${patch.assessmentResult}`);
     toast("Job updated.", "success");
   } catch (error) {
