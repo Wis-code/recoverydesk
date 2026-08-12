@@ -1,0 +1,32 @@
+RECOVERYDESK V2.3.1 — UI / TRAINING HOTFIX
+
+This is intentionally a small hotfix on top of V2.3 Final.
+
+FIXED
+- Required per-tab training no longer opens during page refresh before Firebase
+  has loaded the user's saved training-completion records.
+- Training still remains mandatory the FIRST time that account opens each
+  required tab.
+- Completion continues to follow the account across devices.
+- "Replay all my training" remains an intentional manual reset.
+- Current-user avatar can use the Firebase/Google account photo immediately.
+- Stored staff photo URLs are also supported when available.
+- Square, portrait and landscape photos are visually cropped into the circular
+  avatar using object-fit: cover; the original image is not modified.
+- PWA cache version bumped so phones receive this hotfix.
+
+NOT CHANGED
+- Database rules.
+- Job, finance, document, customer, worker or owner permissions.
+- RecoveryDesk's existing Light / Dark / Follow device theme system.
+- Firebase Storage requirements. Custom file uploads still depend on Storage,
+  but Google-auth profile photos can display without a Storage upload.
+
+DEPLOYMENT
+Because database rules did not change:
+1. Upload/replace the V2.3.1 files in GitHub main.
+2. Commit as: Deploy RecoveryDesk V2.3.1 hotfix
+3. Wait for GitHub Pages to turn green.
+4. Fully close the phone PWA.
+5. Open the RecoveryDesk website once in Chrome, refresh, then reopen the PWA.
+6. Confirm a tab whose tutorial was already completed does NOT replay on refresh.

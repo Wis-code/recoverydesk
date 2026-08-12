@@ -1,0 +1,84 @@
+RECOVERYDESK V2.4 — RECORD LIFECYCLE / MANAGEMENT PASS
+
+This release is NOT just a button patch. It introduces consistent record lifecycle
+rules so RecoveryDesk can be administered from RecoveryDesk instead of Firebase.
+
+CORE PRINCIPLE
+Create -> View -> Edit -> Assign/Reassign -> Archive/Restore -> Void/Delete where safe -> Audit.
+
+CUSTOMERS
+- Existing edit remains.
+- Admin can Archive / Restore customers.
+- Archived customers leave the active list and cannot receive a new intake until restored.
+- Owner can mark an old real-looking test customer as Test Data.
+- Permanent customer cleanup remains through the protected linked Test Data Cleanup,
+  not casual deletion of real customer history.
+
+JOBS
+- Admin can Archive / Restore jobs.
+- Admin can explicitly Add / Replace / Remove the assigned worker (Unassigned is a real state).
+- Reassignment remains audited.
+- Owner can mark legacy test jobs as Test Data for protected cleanup.
+- Submitted/legal job history is preserved rather than casually erased.
+
+DEVICES
+- Admin can edit device details.
+- Admin can Archive / Restore devices.
+- Historical device/job links are preserved.
+
+TASKS
+- Tasks now have a real manage lifecycle.
+- Open/edit title, description, due date, priority and status.
+- Admin can assign, reassign or unassign.
+- Assigned Worker can update their own operational task without changing assignment.
+- Complete/reopen remains available.
+- Admin can Archive/Restore.
+- Admin can permanently delete disposable tasks with a required reason and Audit entry.
+
+FINANCE
+- Payments use VOID rather than silent deletion.
+- Expenses use VOID rather than silent deletion.
+- Void requires a reason and preserves the original record in history.
+- Worker money declarations remain immutable by design.
+
+JOB BOARD
+- Admin can edit an AVAILABLE post.
+- Admin can cancel active/claimed work as before.
+- Owner can delete closed/expired board housekeeping records with a required reason.
+- Claiming remains atomic and assignment-aware.
+
+TEST / DUMMY DATA
+- Owner can now mark old Customer or Job records as Test Data from the record itself.
+- The existing linked Test Data Cleanup then safely removes the complete test set.
+
+STATE / ERROR HANDLING
+- Existing Realtime Database subscriptions remain the source of truth.
+- Writes continue to surface explicit success/failure messages.
+- Destructive lifecycle actions require reasons and create Audit entries.
+
+PROTECTED HISTORY NOT MADE "EASY TO DELETE"
+- Generated legal documents remain immutable.
+- Worker declarations remain immutable.
+- Submitted job edit history remains preserved.
+- Real financial records are voided, not erased.
+
+ACCEPTANCE TEST
+1. Create customer -> edit -> archive -> restore.
+2. Mark an old dummy customer as Test Data -> see it in Settings cleanup.
+3. Create job -> assign worker -> unassign -> reassign -> archive -> restore.
+4. Edit device -> archive -> restore.
+5. Create task -> edit -> block -> complete -> reopen -> reassign -> unassign -> archive -> restore -> delete disposable task.
+6. Record payment -> void with reason -> verify active totals no longer include it.
+7. Record expense -> void with reason.
+8. Post work -> edit while available -> worker claims -> Admin cancels.
+9. Confirm Finance cannot edit operational jobs.
+10. Confirm immutable documents / worker declarations cannot be rewritten.
+
+DEPLOYMENT
+V2.4 changes Realtime Database rules:
+1. Publish database.rules.json FIRST.
+2. Create a GitHub backup branch from current main.
+3. Upload/replace V2.4 files on main.
+4. Commit: Deploy RecoveryDesk V2.4 lifecycle management
+5. Wait for GitHub Pages green.
+6. Hard-refresh desktop and reopen phone PWA.

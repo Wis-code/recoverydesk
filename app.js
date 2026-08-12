@@ -55,6 +55,7 @@ const state = {
   requestMode: "staff",
   pendingStaffRequest: null,
   pendingCustomerRequest: null,
+  trainingLoaded: false,
   services: {
     online: navigator.onLine,
     firestore: null,
@@ -667,6 +668,7 @@ function subscribeObject(path, dataKey, shouldSubscribe = true) {
 
 function startStaffSubscriptions() {
   clearSubscriptions();
+  state.trainingLoaded = false;
 
   subscribeObject("users", "users");
   subscribeObject("customers", "customers");
@@ -681,7 +683,11 @@ function startStaffSubscriptions() {
   subscribeObject("jobPosts", "jobPosts", isOps());
   subscribeObject(state.staff?.role === "worker" ? `workerLedger/${state.user.uid}` : "workerLedger", "workerLedger", state.staff?.role === "worker" || isAdmin() || state.staff?.role === "finance");
   subscribeObject(state.staff?.role === "worker" ? `workerLedgerReviews/${state.user.uid}` : "workerLedgerReviews", "workerLedgerReviews", state.staff?.role === "worker" || isAdmin() || state.staff?.role === "finance");
-  subscribeObject(`training/${state.user.uid}`, "training");
+  sub(`training/${state.user.uid}`, snap => {
+    state.data.training = snap.val() || {};
+    state.trainingLoaded = true;
+    render();
+  });
   subscribeObject("customerAccessRequests", "customerAccessRequests", isOps());
   subscribeObject("expenses", "expenses", isFinance());
   subscribeObject("staffRequests", "staffRequests", isAdmin());
@@ -1154,7 +1160,7 @@ function trainingSlidesFor(view) {
 }
 
 function maybeRunTabTraining(view) {
-  if (!state.user || !state.staff || !TRAINING_TABS.has(view)) return;
+  if (!state.user || !state.staff || !state.trainingLoaded || !TRAINING_TABS.has(view)) return;
   if (modalHost.children.length) return;
   const key = `${view}_${trainingRoleKey()}`;
   if (state.data.training?.[key]?.completedAt) return;
@@ -1282,7 +1288,7 @@ function renderStaffApp() {
 
         <div class="sidebar-footer">
           <button class="profile-chip ghost" data-nav="settings">
-            <span class="avatar">${esc(initials(profileDisplay()))}</span>
+            ${avatarMarkup(profileDisplay(), state.staff)}
             <span>
               <strong>${esc(profileDisplay())}</strong>
               <span>${esc(state.staff.jobTitle || roleLabel())}</span>
@@ -1457,7 +1463,7 @@ function taskRowHtml(task) {
   const dueState = taskDueState(task);
   const assignee = state.data.users?.[task.assignedTo];
   return `
-    <div class="task-row ${task.status === "completed" ? "completed" : ""}">
+    <div class="task-row ${task.status === "completed" ? "completed" : ""} ${isArchived(task) ? "archived" : ""}" data-task-open="${task.key}">
       <button class="task-check ${task.status === "completed" ? "done" : ""}" data-task-toggle="${task.key}">
         ${task.status === "completed" ? icon("check", 15) : ""}
       </button>
@@ -1468,6 +1474,7 @@ function taskRowHtml(task) {
         </span>
       </div>
       <span class="priority-pill ${priorityTone(task.priority)}">${esc(task.priority || "Normal")}</span>
+      ${canManageTask(task) ? `<button class="ghost" data-task-manage="${task.key}" title="Manage task">${icon("edit",15)}</button>` : ""}
     </div>`;
 }
 
@@ -1508,7 +1515,7 @@ function renderJobRows(jobs) {
     <div class="list-row clickable" data-job-key="${esc(job.key || job.jobId)}">
       <div class="list-icon">${icon("devices", 18)}</div>
       <div class="list-main">
-        <strong>${esc(job.jobId || "Legacy job")} · ${esc(jobDisplayName(job))}</strong>
+        <strong>${esc(job.jobId || "Legacy job")} · ${esc(jobDisplayName(job))} ${isArchived(job) ? `<span class="status-pill tone-neutral">Archived</span>` : ""}</strong>
         <span>${esc(jobDeviceSummary(job))} · ${formatDate(job.createdAt)}</span>
       </div>
       <div class="list-side">${statusPill(job.status)}</div>
@@ -1630,9 +1637,11 @@ function renderDashboard(host) {
 }
 
 function renderCustomers(host) {
-  const customers = values(state.data.customers)
+  const allCustomers = values(state.data.customers)
     .map(customer => ({ customerId: customer.key, ...customer }))
     .sort((a,b)=>(b.updatedAt||b.createdAt||0)-(a.updatedAt||a.createdAt||0));
+  const showArchivedCustomers = state.ui?.showArchivedCustomers === true;
+  const customers = allCustomers.filter(customer => showArchivedCustomers || activeRecord(customer));
 
   const pendingRequests = values(state.data.customerAccessRequests)
     .filter(request => request.status !== "approved" && request.status !== "rejected");
@@ -1646,6 +1655,7 @@ function renderCustomers(host) {
       </div>
       <div class="head-actions">
         ${pendingRequests.length && isOps() ? `<button class="secondary" id="portalRequestsBtn">${icon("link",17)} Portal requests <span class="nav-badge alert">${pendingRequests.length}</span></button>` : ""}
+        ${isAdmin() ? `<button class="secondary" id="toggleArchivedCustomers">${icon("archive",17)} ${showArchivedCustomers ? "Hide archived" : "Show archived"}</button>` : ""}
         ${isOps() ? `<button class="primary" id="newCustomerBtn">${icon("plus",17)} New customer</button>` : ""}
       </div>
     </div>
@@ -1660,6 +1670,11 @@ function renderCustomers(host) {
     <section class="panel" id="customerListPanel">${renderCustomerRows(customers)}</section>`;
 
   document.getElementById("newCustomerBtn")?.addEventListener("click", () => openCustomerModal());
+  document.getElementById("toggleArchivedCustomers")?.addEventListener("click", () => {
+    state.ui ||= {};
+    state.ui.showArchivedCustomers = !state.ui.showArchivedCustomers;
+    render();
+  });
   document.getElementById("portalRequestsBtn")?.addEventListener("click", openCustomerPortalRequests);
 
   document.getElementById("customerSearch").oninput = event => {
@@ -1685,7 +1700,7 @@ function renderCustomerRows(customers) {
       <div class="list-row clickable" data-customer-id="${customer.customerId}">
         <div class="avatar">${esc(initials(customer.fullName))}</div>
         <div class="list-main">
-          <strong>${esc(customer.fullName || "Unnamed customer")}</strong>
+          <strong>${esc(customer.fullName || "Unnamed customer")} ${isArchived(customer) ? `<span class="status-pill tone-neutral">Archived</span>` : ""}</strong>
           <span>${esc(customer.customerId)} · ${esc(customer.phone || "No phone")} · ${deviceCount} device${deviceCount === 1 ? "" : "s"}</span>
         </div>
         <div class="list-side">
@@ -1823,8 +1838,10 @@ function renderCustomerDetail(host) {
       </div>
       <div class="head-actions">
         ${accessRequests.length && isOps() ? `<button class="secondary" id="customerAccessBtn">${icon("link",17)} Access request</button>` : ""}
+        ${isAdmin() ? `<button class="secondary" id="customerArchiveBtn">${icon("archive",17)} ${isArchived(customer) ? "Restore" : "Archive"}</button>` : ""}
+        ${isOwner() && !customer.testRecord ? `<button class="secondary" id="markCustomerTestBtn">${icon("shield",17)} Mark test</button>` : ""}
         ${isOps() ? `<button class="secondary" id="editCustomerBtn">${icon("edit",17)} Edit</button>` : ""}
-        ${isOps() ? `<button class="primary" id="customerNewIntake">${icon("plus",17)} New intake</button>` : ""}
+        ${isOps() && !isArchived(customer) ? `<button class="primary" id="customerNewIntake">${icon("plus",17)} New intake</button>` : ""}
       </div>
     </div>
 
@@ -1874,6 +1891,8 @@ function renderCustomerDetail(host) {
 
   document.getElementById("backCustomers").onclick = () => navigate("customers");
   document.getElementById("editCustomerBtn")?.addEventListener("click", () => openCustomerModal(customer));
+  document.getElementById("customerArchiveBtn")?.addEventListener("click", () => archiveRecord(`customers/${customer.customerId}`, "customer", customer.customerId, customer.fullName, !isArchived(customer)));
+  document.getElementById("markCustomerTestBtn")?.addEventListener("click", () => markLegacyTestRecord(`customers/${customer.customerId}`, "customer", customer.customerId, customer.fullName));
   document.getElementById("customerNewIntake")?.addEventListener("click", () => startIntake(customer.customerId));
   document.getElementById("addFollowupBtn")?.addEventListener("click", () => openFollowupModal(customer));
   document.getElementById("customerAccessBtn")?.addEventListener("click", () => openCustomerPortalRequests(customer.customerId));
@@ -2054,9 +2073,11 @@ function openFollowupModal(customer) {
 
 
 function renderJobs(host) {
-  const jobs = values(state.data.jobs)
+  const allJobs = values(state.data.jobs)
     .map(job => ({ ...job, key: job.key || job.jobId }))
     .sort((a,b)=>(b.createdAt||0)-(a.createdAt||0));
+  const showArchivedJobs = state.ui?.showArchivedJobs === true;
+  const jobs = allJobs.filter(job => showArchivedJobs || activeRecord(job));
 
   host.innerHTML = `
     <div class="page-head">
@@ -2066,6 +2087,7 @@ function renderJobs(host) {
         <p>Every intake, device and recovery decision in one queue.</p>
       </div>
       <div class="head-actions">
+        ${isAdmin() ? `<button class="secondary" id="toggleArchivedJobs">${icon("archive",17)} ${showArchivedJobs ? "Hide archived" : "Show archived"}</button>` : ""}
         ${isOps() ? `<button class="primary" id="jobsNewIntake">${icon("plus",17)} New intake</button>` : ""}
       </div>
     </div>
@@ -2085,6 +2107,11 @@ function renderJobs(host) {
     <section class="panel" id="jobListHost">${renderJobRows(jobs)}</section>`;
 
   document.getElementById("jobsNewIntake")?.addEventListener("click", () => startIntake());
+  document.getElementById("toggleArchivedJobs")?.addEventListener("click", () => {
+    state.ui ||= {};
+    state.ui.showArchivedJobs = !state.ui.showArchivedJobs;
+    render();
+  });
 
   const filter = () => {
     const q = document.getElementById("jobSearch").value.trim().toLowerCase();
@@ -2703,6 +2730,116 @@ function staffName(uid) {
   return profile?.displayName || profile?.realName || profile?.name || "staff";
 }
 
+
+function isArchived(record) {
+  return Boolean(record?.archivedAt || record?.archived === true);
+}
+
+function activeRecord(record) {
+  return !isArchived(record);
+}
+
+function managementReasonModal({ title, subtitle = "", warning = "", label = "Reason *", minLength = 5, confirmText = "Confirm" }) {
+  return new Promise(resolve => {
+    const body = `
+      ${warning ? `<div class="notice warning">${warning}</div>` : ""}
+      <form id="managementReasonForm" style="margin-top:12px">
+        <label class="field"><span>${esc(label)}</span>
+          <textarea id="managementReasonText" minlength="${minLength}" required></textarea>
+        </label>
+      </form>`;
+    openModal({
+      title,
+      subtitle,
+      body,
+      actions: `<button class="secondary" id="managementReasonCancel">Cancel</button><button class="primary" id="managementReasonConfirm">${confirmText}</button>`
+    });
+    document.getElementById("managementReasonCancel").onclick = () => {
+      closeModal();
+      resolve("");
+    };
+    document.getElementById("managementReasonConfirm").onclick = () => {
+      const form = document.getElementById("managementReasonForm");
+      if (!form.reportValidity()) return;
+      const value = document.getElementById("managementReasonText").value.trim();
+      closeModal();
+      resolve(value);
+    };
+  });
+}
+
+async function archiveRecord(path, recordType, recordId, label, archived = true) {
+  const reason = await managementReasonModal({
+    title: archived ? `Archive ${recordType}` : `Restore ${recordType}`,
+    subtitle: label || recordId,
+    warning: archived
+      ? "Archiving removes this record from normal active queues without erasing its history."
+      : "Restoring returns this record to active operational lists.",
+    label: archived ? "Reason for archive *" : "Reason for restoration *",
+    confirmText: archived ? "Archive" : "Restore"
+  });
+  if (!reason) return false;
+
+  try {
+    await update(ref(db, path), archived ? {
+      archived: true,
+      archivedAt: now(),
+      archivedBy: state.user.uid,
+      archivedByName: profileDisplay(),
+      archiveReason: reason,
+      updatedAt: now()
+    } : {
+      archived: false,
+      archivedAt: null,
+      archivedBy: "",
+      archivedByName: "",
+      archiveReason: "",
+      restoredAt: now(),
+      restoredBy: state.user.uid,
+      updatedAt: now()
+    });
+    await recordAudit(archived ? "archived" : "restored", recordType, recordId, reason);
+    toast(`${recordType[0].toUpperCase()+recordType.slice(1)} ${archived ? "archived" : "restored"}.`, "success");
+    return true;
+  } catch (error) {
+    console.error(error);
+    toast(`${recordType} could not be ${archived ? "archived" : "restored"}.`, "error");
+    return false;
+  }
+}
+
+async function markLegacyTestRecord(path, recordType, recordId, label) {
+  if (!isOwner()) return;
+  const reason = await managementReasonModal({
+    title: "Mark as test data",
+    subtitle: label || recordId,
+    warning: "This does not delete anything now. It only makes this old record eligible for Owner Test Data Cleanup. Do not use this on a real customer/job.",
+    label: "Why is this a test/dummy record? *",
+    minLength: 8,
+    confirmText: "Mark as test"
+  });
+  if (!reason) return;
+  try {
+    await update(ref(db, path), {
+      testRecord: true,
+      testMarkedAt: now(),
+      testMarkedBy: state.user.uid,
+      testMarkReason: reason,
+      updatedAt: now()
+    });
+    await recordAudit("marked test data", recordType, recordId, reason);
+    toast("Marked as test data. It will now appear in Owner Test Data Cleanup.", "success");
+  } catch (error) {
+    console.error(error);
+    toast("Record could not be marked as test data.", "error");
+  }
+}
+
+function canManageTask(task) {
+  return isAdmin() || task?.assignedTo === state.user?.uid;
+}
+
+
 function workerOwnsJob(job) {
   return state.staff?.role === "worker" && (
     job?.assignedTo === state.user?.uid ||
@@ -2781,7 +2918,9 @@ function renderJobDetail(host) {
         <p><strong>Owner: ${esc(job.ownerName || customer?.fullName || jobDisplayName(job))}</strong> · Customer: ${esc(customer?.fullName || jobDisplayName(job))} · ${esc(jobDeviceSummary(job))}</p>
       </div>
       <div class="head-actions">
-        ${canControlJob(job) ? `<button class="secondary" id="jobTaskBtn">${icon("tasks",17)} Add task</button>` : ""}
+        ${isAdmin() ? `<button class="secondary" id="jobArchiveBtn">${icon("archive",17)} ${isArchived(job) ? "Restore" : "Archive"}</button>` : ""}
+        ${isOwner() && !job.testRecord ? `<button class="secondary" id="markJobTestBtn">${icon("shield",17)} Mark test</button>` : ""}
+        ${canControlJob(job) && !isArchived(job) ? `<button class="secondary" id="jobTaskBtn">${icon("tasks",17)} Add task</button>` : ""}
         <button class="secondary" id="jobEmailUpdateBtn">${icon("file",17)} Email update</button>
         ${canControlJob(job) ? `<button class="secondary" id="jobAgreementBtn">${icon("signature",17)} Agreement</button>` : ""}
         ${canControlJob(job) ? `<button class="primary" id="jobInvoiceBtn">${icon("receipt",17)} Invoice</button>` : ""}
@@ -2860,6 +2999,18 @@ function renderJobDetail(host) {
               </select>
             </label>
             <label class="field"><span>Recovery quote (₦)</span><input id="jobRecoveryQuote" type="number" min="0" value="${esc(job.recoveryQuote || "")}"></label>
+            ${isAdmin() ? `<label class="field"><span>Assigned worker</span>
+              <select id="jobAssignedTo">
+                <option value="">Unassigned</option>
+                ${values(state.data.users)
+                  .filter(profile => profile.active !== false && ["worker","subadmin","admin","owner"].includes(profile.role))
+                  .map(profile => ({uid: profile.key, ...profile}))
+                  .sort((a,b)=>profileNameForSort(a).localeCompare(profileNameForSort(b)))
+                  .map(profile => `<option value="${profile.uid}" ${job.assignedTo === profile.uid ? "selected" : ""}>${esc(profileDisplayName(profile))}</option>`)
+                  .join("")}
+              </select>
+              <small>Add, replace or return the job to Unassigned.</small>
+            </label>` : ""}
             ${isAdmin() ? `<label class="field"><span>Discount (₦)</span><input id="jobDiscount" type="number" min="0" value="${esc(job.discount || "")}"><small>Administrator-controlled commercial adjustment</small></label>` : ""}
           </div>
           ${jobIsSubmitted(job) && workerOwnsJob(job) ? `<div class="notice warning" style="margin-bottom:10px">${icon("audit",15)} This record has been submitted. Every worker edit now requires a written reason and is permanently logged.</div>` : ""}
@@ -2925,6 +3076,8 @@ function renderJobDetail(host) {
     </div>`;
 
   document.getElementById("backJobs").onclick = () => navigate("jobs");
+  document.getElementById("jobArchiveBtn")?.addEventListener("click", () => archiveRecord(`jobs/${job.key}`, "job", job.jobId || job.key, job.jobId || job.key, !isArchived(job)));
+  document.getElementById("markJobTestBtn")?.addEventListener("click", () => markLegacyTestRecord(`jobs/${job.key}`, "job", job.jobId || job.key, job.jobId || job.key));
   document.getElementById("saveJobControls")?.addEventListener("click", () => saveJobControls(job));
   document.getElementById("submitJobRecord")?.addEventListener("click", () => submitJobRecord(job));
   document.getElementById("recordPaymentBtn")?.addEventListener("click", () => openPaymentModal(job));
@@ -2958,6 +3111,49 @@ function renderJobDetail(host) {
     button.onclick = () => previewAttachment(job.key, button.dataset.attachmentPreview);
   });
 
+  host.querySelectorAll("[data-edit-device]").forEach(button => {
+    button.onclick = () => {
+      const device = state.data.devices?.[button.dataset.editDevice];
+      if (device) openDeviceEditModal({deviceId: button.dataset.editDevice, ...device});
+    };
+  });
+  host.querySelectorAll("[data-archive-device]").forEach(button => {
+    button.onclick = () => {
+      const deviceId = button.dataset.archiveDevice;
+      const device = state.data.devices?.[deviceId];
+      if (device) archiveRecord(`devices/${deviceId}`, "device", deviceId, `${device.type || "Device"} ${deviceId}`, !isArchived(device));
+    };
+  });
+  bindTaskManagement(host);
+  host.querySelectorAll("[data-void-payment]").forEach(button => {
+    button.onclick = async () => {
+      const payment = state.data.payments?.[button.dataset.voidPayment];
+      if (!payment) return;
+      const reason = await managementReasonModal({
+        title: "Void payment record",
+        subtitle: `${formatMoney(payment.amount)} · ${payment.category || "Payment"}`,
+        warning: "Voiding preserves the original payment record and removes it from active financial totals. It is safer than deleting financial history.",
+        label: "Reason for void *",
+        minLength: 8,
+        confirmText: "Void payment"
+      });
+      if (!reason) return;
+      try {
+        await update(ref(db, `payments/${button.dataset.voidPayment}`), {
+          status: "void",
+          voidReason: reason,
+          voidedAt: now(),
+          voidedBy: state.user.uid,
+          voidedByName: profileDisplay()
+        });
+        await recordAudit("voided", "payment", button.dataset.voidPayment, reason);
+        toast("Payment voided; original history preserved.", "success");
+      } catch (error) {
+        console.error(error);
+        toast("Payment could not be voided.", "error");
+      }
+    };
+  });
   bindTaskChecks(host);
 }
 
@@ -3015,6 +3211,53 @@ async function confirmPhysicalSignature(job) {
       console.error(error);
       toast("Authorization confirmation could not be saved.", "error");
       setBusy(button, false);
+    }
+  };
+}
+
+
+function openDeviceEditModal(device) {
+  if (!isAdmin()) return;
+  const deviceId = device.deviceId || device.key;
+  const body = `
+    <form id="deviceEditForm">
+      <div class="form-grid three">
+        <label class="field"><span>Device type *</span><input name="type" value="${esc(device.type || "")}" required></label>
+        <label class="field"><span>Brand / model</span><input name="brandModel" value="${esc(device.brandModel || "")}"></label>
+        <label class="field"><span>Capacity</span><input name="capacity" value="${esc(device.capacity || "")}"></label>
+        <label class="field"><span>Serial number</span><input name="serial" value="${esc(device.serial || "")}"></label>
+        <label class="field"><span>Physical condition</span><input name="physicalCondition" value="${esc(device.physicalCondition || "")}"></label>
+      </div>
+      <label class="field"><span>Device notes</span><textarea name="notes">${esc(device.notes || "")}</textarea></label>
+    </form>`;
+  openModal({
+    title: "Edit device",
+    subtitle: deviceId,
+    body,
+    actions: `<button class="secondary" data-modal-cancel>Cancel</button><button class="primary" id="saveDeviceEdit">Save device</button>`
+  });
+  modalHost.querySelector("[data-modal-cancel]").onclick = closeModal;
+  document.getElementById("saveDeviceEdit").onclick = async () => {
+    const form = document.getElementById("deviceEditForm");
+    if (!form.reportValidity()) return;
+    const data = new FormData(form);
+    try {
+      await update(ref(db, `devices/${deviceId}`), {
+        type: data.get("type").trim(),
+        brandModel: String(data.get("brandModel") || "").trim(),
+        capacity: String(data.get("capacity") || "").trim(),
+        serial: String(data.get("serial") || "").trim(),
+        physicalCondition: String(data.get("physicalCondition") || "").trim(),
+        notes: String(data.get("notes") || "").trim(),
+        updatedAt: now(),
+        updatedBy: state.user.uid
+      });
+      await recordAudit("updated", "device", deviceId, "Device details updated");
+      closeModal();
+      toast("Device updated.", "success");
+    } catch (error) {
+      console.error(error);
+      toast("Device could not be updated.", "error");
     }
   };
 }
@@ -3108,7 +3351,11 @@ async function saveJobControls(job) {
       assessmentResult: document.getElementById("jobAssessmentResult").value,
       recoveryQuote: newQuote,
       ...(quoteChanged ? { quoteApproval: null } : {}),
-      ...(isAdmin() ? { discount: safeNumber(document.getElementById("jobDiscount")?.value) } : {}),
+      ...(isAdmin() ? {
+        discount: safeNumber(document.getElementById("jobDiscount")?.value),
+        assignedTo: document.getElementById("jobAssignedTo")?.value || "",
+        assignedToName: document.getElementById("jobAssignedTo")?.value ? staffName(document.getElementById("jobAssignedTo")?.value) : ""
+      } : {}),
       staffNotes: document.getElementById("jobStaffNotes").value.trim(),
       updatedAt: now(),
       updatedBy: state.user.uid,
@@ -3121,6 +3368,11 @@ async function saveJobControls(job) {
     };
 
     const previousStatus = job.status;
+    const assignmentChanged = isAdmin() && (job.assignedTo || "") !== (patch.assignedTo || "");
+    if (assignmentChanged) {
+      patch.assignedAt = now();
+      patch.assignedBy = state.user.uid;
+    }
 
     if (editReason) {
       const editRef = push(ref(db, `jobEdits/${job.key}`));
@@ -3188,7 +3440,10 @@ function renderPayments(payments) {
         <strong>${formatMoney(payment.amount)} · ${esc(payment.category || "Payment")}</strong>
         <span>${esc(payment.method || "—")} ${payment.reference ? `· ${esc(payment.reference)}` : ""} · ${formatDate(payment.createdAt, true)}</span>
       </div>
-      <div class="list-side"><span class="payment-pill tone-brand-4">Confirmed</span></div>
+      <div class="list-side">
+        <span class="payment-pill ${payment.status === "void" ? "tone-danger" : "tone-brand-4"}">${payment.status === "void" ? "Voided" : "Confirmed"}</span>
+        ${(isAdmin() || state.staff?.role === "finance") && payment.status !== "void" ? `<button class="ghost danger" data-void-payment="${payment.key}">Void</button>` : ""}
+      </div>
     </div>`).join("")}</div>`;
 }
 
@@ -3696,6 +3951,27 @@ function renderJobBoard(host) {
   document.getElementById("postWorkBtn")?.addEventListener("click", openPostWorkModal);
   host.querySelectorAll("[data-claim-post]").forEach(button => button.onclick = () => claimJobPost(button.dataset.claimPost));
   host.querySelectorAll("[data-cancel-post]").forEach(button => button.onclick = () => cancelJobPost(button.dataset.cancelPost));
+  host.querySelectorAll("[data-edit-post]").forEach(button => button.onclick = () => openPostWorkModal(state.data.jobPosts?.[button.dataset.editPost] ? {key: button.dataset.editPost, ...state.data.jobPosts[button.dataset.editPost]} : null));
+  host.querySelectorAll("[data-delete-post]").forEach(button => button.onclick = async () => {
+    const post = state.data.jobPosts?.[button.dataset.deletePost];
+    if (!post) return;
+    const reason = await managementReasonModal({
+      title: "Delete closed board post",
+      subtitle: post.title || button.dataset.deletePost,
+      warning: "This is intended for disposable/closed board housekeeping. Recovery job history is not deleted.",
+      label: "Reason for deletion *",
+      confirmText: "Delete post"
+    });
+    if (!reason) return;
+    try {
+      await remove(ref(db, `jobPosts/${button.dataset.deletePost}`));
+      await recordAudit("deleted", "job board", button.dataset.deletePost, reason);
+      toast("Board post deleted.", "success");
+    } catch (error) {
+      console.error(error);
+      toast("Board post could not be deleted.", "error");
+    }
+  });
   host.querySelectorAll("[data-open-post-job]").forEach(button => button.onclick = () => navigate("job-detail", { jobKey: button.dataset.openPostJob }));
 }
 
@@ -3714,38 +3990,43 @@ function jobPostCard(post) {
       <div class="head-actions" style="justify-content:flex-start;margin-top:10px">
         ${state.staff?.role === "worker" && status === "available" ? `<button class="primary" data-claim-post="${post.key}">${icon("check",16)} Claim job</button>` : ""}
         ${post.relatedJobKey && (post.claimedBy === state.user.uid || isAdmin()) ? `<button class="secondary" data-open-post-job="${esc(post.relatedJobKey)}">Open linked job</button>` : ""}
+        ${isAdmin() && status === "available" ? `<button class="secondary" data-edit-post="${post.key}">${icon("edit",15)} Edit</button>` : ""}
         ${isAdmin() && ["available","claimed"].includes(status) ? `<button class="secondary danger" data-cancel-post="${post.key}">${icon("close",15)} Cancel</button>` : ""}
+        ${isOwner() && ["cancelled","expired"].includes(status) ? `<button class="ghost danger" data-delete-post="${post.key}">${icon("trash",15)} Delete</button>` : ""}
       </div>
     </div>`;
 }
 
-function openPostWorkModal() {
+function openPostWorkModal(existingPost = null) {
   if (!isAdmin()) return;
+  const isEdit = Boolean(existingPost);
   const jobs = values(state.data.jobs)
     .map(job => ({...job, key:job.key || job.jobId}))
     .filter(job => !["Completed","Closed"].includes(job.status) && !job.assignedTo);
   const body = `
     <form id="postWorkForm">
-      <label class="field"><span>Work title *</span><input name="title" required placeholder="e.g. Assess customer drive and report findings"></label>
-      <label class="field"><span>Instructions *</span><textarea name="instructions" required></textarea></label>
+      <label class="field"><span>Work title *</span><input name="title" required value="${esc(existingPost?.title || "")}" placeholder="e.g. Assess customer drive and report findings"></label>
+      <label class="field"><span>Instructions *</span><textarea name="instructions" required>${esc(existingPost?.instructions || "")}</textarea></label>
       <div class="form-grid three">
-        <label class="field"><span>Deadline *</span><input name="deadlineAt" type="datetime-local" required></label>
-        <label class="field"><span>Priority</span><select name="priority"><option>Normal</option><option>Urgent</option><option>Critical</option></select></label>
+        <label class="field"><span>Deadline *</span><input name="deadlineAt" type="datetime-local" value="${esc(existingPost?.deadlineAt || "")}" required></label>
+        <label class="field"><span>Priority</span><select name="priority">${["Normal","Urgent","Critical"].map(p=>`<option ${existingPost?.priority===p?"selected":""}>${p}</option>`).join("")}</select></label>
         <label class="field"><span>Link recovery job</span><select name="relatedJobKey"><option value="">No linked job</option>${jobs.map(job=>`<option value="${job.key}">${esc(job.jobId || job.key)} · ${esc(jobDisplayName(job))}</option>`).join("")}</select></label>
       </div>
       <div class="notice info">If linked to a recovery job, the worker who claims this post becomes that job's assigned worker.</div>
     </form>`;
-  openModal({title:"Post available work", subtitle:"Visible to active workers", body, actions:`<button class="secondary" data-modal-cancel>Cancel</button><button class="primary" id="saveWorkPost">${icon("check",17)} Post work</button>`});
+  openModal({title:isEdit ? "Edit available work" : "Post available work", subtitle:"Visible to active workers", body, actions:`<button class="secondary" data-modal-cancel>Cancel</button><button class="primary" id="saveWorkPost">${icon("check",17)} ${isEdit ? "Save changes" : "Post work"}</button>`});
   modalHost.querySelector("[data-modal-cancel]").onclick=closeModal;
   document.getElementById("saveWorkPost").onclick=async()=>{
     const form=document.getElementById("postWorkForm"); if(!form.reportValidity()) return;
     const data=new FormData(form); const relatedJobKey=data.get("relatedJobKey") || ""; const relatedJob=relatedJobKey ? jobByKey(relatedJobKey) : null;
     const deadline = new Date(data.get("deadlineAt"));
     if (deadline.getTime() <= now()) return toast("Choose a deadline in the future.","error");
-    const postRef=push(ref(db,"jobPosts"));
+    const postRef = isEdit ? ref(db,`jobPosts/${existingPost.key}`) : push(ref(db,"jobPosts"));
     try{
-      await set(postRef,{title:data.get("title").trim(),instructions:data.get("instructions").trim(),deadlineAt:data.get("deadlineAt"),deadlineMs:deadline.getTime(),priority:data.get("priority"),relatedJobKey,relatedJobId:relatedJob?.jobId||"",status:"available",createdAt:now(),createdBy:state.user.uid,createdByName:profileDisplay()});
-      await recordAudit("posted","job board",postRef.key,data.get("title").trim()); closeModal(); toast("Work posted to the team.","success");
+      const patch = {title:data.get("title").trim(),instructions:data.get("instructions").trim(),deadlineAt:data.get("deadlineAt"),deadlineMs:deadline.getTime(),priority:data.get("priority"),relatedJobKey,relatedJobId:relatedJob?.jobId||"",status:"available",updatedAt:now(),updatedBy:state.user.uid};
+      if (!isEdit) Object.assign(patch,{createdAt:now(),createdBy:state.user.uid,createdByName:profileDisplay()});
+      await update(postRef,patch);
+      await recordAudit(isEdit ? "updated" : "posted","job board",postRef.key,data.get("title").trim()); closeModal(); toast(isEdit ? "Work post updated." : "Work posted to the team.","success");
     }catch(error){console.error(error);toast("Work could not be posted.","error");}
   };
 }
@@ -3792,8 +4073,10 @@ function cancelJobPost(postKey) {
 }
 
 function renderTasks(host) {
+  const showArchivedTasks = state.ui?.showArchivedTasks === true;
   const allTasks = values(state.data.tasks)
     .filter(task => isAdmin() || task.assignedTo === state.user.uid)
+    .filter(task => showArchivedTasks || activeRecord(task))
     .sort((a,b)=>(a.dueAt||"9999").localeCompare(b.dueAt||"9999"));
 
   const groups = {
@@ -3810,7 +4093,10 @@ function renderTasks(host) {
         <h1>Tasks</h1>
         <p>RecoveryDesk reminds you inside the app; background push reminders are intentionally deferred.</p>
       </div>
-      <div class="head-actions"><button class="primary" id="newTaskBtn">${icon("plus",17)} New task</button></div>
+      <div class="head-actions">
+        ${isAdmin() ? `<button class="secondary" id="toggleArchivedTasks">${icon("archive",17)} ${showArchivedTasks ? "Hide archived" : "Show archived"}</button>` : ""}
+        <button class="primary" id="newTaskBtn">${icon("plus",17)} New task</button>
+      </div>
     </div>
 
     <div class="grid two">
@@ -3824,7 +4110,13 @@ function renderTasks(host) {
     </div>`;
 
   document.getElementById("newTaskBtn").onclick = () => openTaskModal();
+  document.getElementById("toggleArchivedTasks")?.addEventListener("click", () => {
+    state.ui ||= {};
+    state.ui.showArchivedTasks = !state.ui.showArchivedTasks;
+    render();
+  });
   bindTaskChecks(host);
+  bindTaskManagement(host);
 }
 
 function taskGroupPanel(title, tasks, iconName) {
@@ -3837,6 +4129,10 @@ function taskGroupPanel(title, tasks, iconName) {
         ? tasks.map(taskRowHtml).join("")
         : emptyState(iconName, `No ${title.toLowerCase()} tasks`, "Nothing to show here.")}
     </section>`;
+}
+
+function profileDisplayName(profile) {
+  return profile?.displayName || profile?.realName || profile?.name || profile?.email || profile?.uid || "Staff";
 }
 
 function profileNameForSort(profile) {
@@ -4111,7 +4407,7 @@ function renderFinance(host) {
                 <strong>${formatMoney(expense.amount)} · ${esc(expense.category || "Expense")}</strong>
                 <span>${esc(expense.description || "")}</span>
               </div>
-              <div class="list-side"><span class="tiny muted">${formatDate(expense.createdAt)}</span></div>
+              <div class="list-side"><span class="tiny muted">${formatDate(expense.createdAt)}</span>${(isAdmin() || state.staff?.role === "finance") && expense.status !== "void" ? `<button class="ghost danger" data-void-expense="${expense.key}">Void</button>` : ""}</div>
             </div>`).join("")}</div>` : emptyState("receipt","No expenses","Add operational expenses here.")}
       </section>
     </div>
@@ -4126,6 +4422,34 @@ function renderFinance(host) {
     </section>`;
 
   document.getElementById("addExpenseBtn").onclick = openExpenseModal;
+  host.querySelectorAll("[data-void-expense]").forEach(button => {
+    button.onclick = async () => {
+      const expense = state.data.expenses?.[button.dataset.voidExpense];
+      if (!expense) return;
+      const reason = await managementReasonModal({
+        title: "Void expense",
+        subtitle: `${formatMoney(expense.amount)} · ${expense.category || "Expense"}`,
+        warning: "Voiding preserves finance history while removing the expense from active totals.",
+        label: "Reason for void *",
+        confirmText: "Void expense"
+      });
+      if (!reason) return;
+      try {
+        await update(ref(db, `expenses/${button.dataset.voidExpense}`), {
+          status: "void",
+          voidReason: reason,
+          voidedAt: now(),
+          voidedBy: state.user.uid,
+          voidedByName: profileDisplay()
+        });
+        await recordAudit("voided", "expense", button.dataset.voidExpense, reason);
+        toast("Expense voided.", "success");
+      } catch (error) {
+        console.error(error);
+        toast("Expense could not be voided.", "error");
+      }
+    };
+  });
   document.getElementById("openWorkerExpenses")?.addEventListener("click", () => navigate("expenses"));
   host.querySelectorAll("[data-reconcile-payment]").forEach(button => {
     button.onclick = async () => {
@@ -4255,7 +4579,7 @@ function renderStaff(host) {
 
       <div class="list">${profiles.map(profile => `
         <div class="list-row">
-          <div class="avatar">${esc(initials(profile.displayName || profile.realName || profile.name))}</div>
+          ${avatarMarkup(profile.displayName || profile.realName || profile.name, profile)}
           <div class="list-main">
             <strong>${esc(profile.displayName || profile.realName || profile.name || "Staff")}</strong>
             <span>${esc(profile.realName || profile.name || "")} · ${esc(profile.jobTitle || roleLabel(profile.role))} · ${esc(profile.email || "")}</span>
@@ -4526,7 +4850,7 @@ function renderSettings(host) {
       <section class="panel form-section">
         <div class="panel-head">
           <div><h2>Your profile</h2><p>Real name is controlled by Admin; display name is yours to change.</p></div>
-          <div class="avatar">${esc(initials(profileDisplay()))}</div>
+          ${avatarMarkup(profileDisplay(), state.staff)}
         </div>
 
         <label class="field"><span>Real name</span><input value="${esc(profileRealName())}" readonly></label>
@@ -4712,7 +5036,13 @@ function renderSettings(host) {
 
   document.getElementById("syncAllAccessMirrors")?.addEventListener("click", syncAllAccessMirrors);
   document.getElementById("replayTrainingBtn")?.addEventListener("click", async () => {
-    try { await remove(ref(db, `training/${state.user.uid}`)); toast("Training reset. The required lessons will play again as you open each tab.", "success"); navigate("dashboard"); }
+    try {
+      await remove(ref(db, `training/${state.user.uid}`));
+      state.data.training = {};
+      state.trainingLoaded = true;
+      toast("Training reset. The required lessons will play again as you open each tab.", "success");
+      navigate("dashboard");
+    }
     catch { toast("Training could not be reset.", "error"); }
   });
   document.getElementById("cleanupTestDataBtn")?.addEventListener("click", openTestDataCleanup);

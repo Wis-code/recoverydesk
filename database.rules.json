@@ -79,7 +79,7 @@
     "tasks": {
       ".read": "auth != null && root.child('users').child(auth.uid).child('role').exists() && root.child('users').child(auth.uid).child('active').val() != false",
       "$taskId": {
-        ".write": "(auth != null && (root.child('users').child(auth.uid).child('role').val() === 'owner' || root.child('users').child(auth.uid).child('role').val() === 'admin' || root.child('users').child(auth.uid).child('role').val() === 'subadmin') && root.child('users').child(auth.uid).child('active').val() != false) || (auth != null && root.child('users').child(auth.uid).child('role').exists() && root.child('users').child(auth.uid).child('active').val() != false && ((!data.exists() && newData.child('assignedTo').val() === auth.uid) || (data.child('assignedTo').val() === auth.uid && newData.child('assignedTo').val() === auth.uid)))"
+        ".write": "(auth != null && (root.child('users').child(auth.uid).child('role').val() === 'owner' || root.child('users').child(auth.uid).child('role').val() === 'admin' || root.child('users').child(auth.uid).child('role').val() === 'subadmin') && root.child('users').child(auth.uid).child('active').val() != false) || (auth != null && root.child('users').child(auth.uid).child('role').val() === 'worker' && root.child('users').child(auth.uid).child('active').val() != false && ((!data.exists() && newData.child('assignedTo').val() === auth.uid) || (data.exists() && data.child('assignedTo').val() === auth.uid && newData.exists() && newData.child('assignedTo').val() === auth.uid)))"
       }
     },
     "payments": {
@@ -91,7 +91,7 @@
     "expenses": {
       ".read": "auth != null && ((root.child('users').child(auth.uid).child('role').val() === 'owner' || root.child('users').child(auth.uid).child('role').val() === 'admin' || root.child('users').child(auth.uid).child('role').val() === 'subadmin') || root.child('users').child(auth.uid).child('role').val() === 'finance') && root.child('users').child(auth.uid).child('active').val() != false",
       "$expenseId": {
-        ".write": "auth != null && ((root.child('users').child(auth.uid).child('role').val() === 'owner' || root.child('users').child(auth.uid).child('role').val() === 'admin' || root.child('users').child(auth.uid).child('role').val() === 'subadmin') || root.child('users').child(auth.uid).child('role').val() === 'finance') && root.child('users').child(auth.uid).child('active').val() != false"
+        ".write": "auth != null && root.child('users').child(auth.uid).child('active').val() != false && ((root.child('users').child(auth.uid).child('role').val() === 'owner' || root.child('users').child(auth.uid).child('role').val() === 'admin' || root.child('users').child(auth.uid).child('role').val() === 'subadmin') || root.child('users').child(auth.uid).child('role').val() === 'finance')"
       }
     },
     "documents": {
@@ -149,9 +149,9 @@
       }
     },
     "jobPosts": {
-      ".read": "auth != null && root.child('users').child(auth.uid).child('active').val() != false && root.child('users').child(auth.uid).child('role').exists()",
+      ".read": "auth != null && root.child('users').child(auth.uid).child('role').exists() && root.child('users').child(auth.uid).child('active').val() != false",
       "$postId": {
-        ".write": "auth != null && root.child('users').child(auth.uid).child('active').val() != false && ((root.child('users').child(auth.uid).child('role').val() === 'owner' || root.child('users').child(auth.uid).child('role').val() === 'admin' || root.child('users').child(auth.uid).child('role').val() === 'subadmin') || (root.child('users').child(auth.uid).child('role').val() === 'worker' && data.exists() && data.child('status').val() === 'available' && data.child('deadlineMs').isNumber() && data.child('deadlineMs').val() >= now && newData.child('status').val() === 'claimed' && newData.child('claimedBy').val() === auth.uid && newData.child('title').val() === data.child('title').val() && newData.child('instructions').val() === data.child('instructions').val() && newData.child('deadlineAt').val() === data.child('deadlineAt').val() && newData.child('deadlineMs').val() === data.child('deadlineMs').val() && newData.child('priority').val() === data.child('priority').val() && newData.child('relatedJobKey').val() === data.child('relatedJobKey').val()))"
+        ".write": "auth != null && root.child('users').child(auth.uid).child('active').val() != false && ((root.child('users').child(auth.uid).child('role').val() === 'owner' || root.child('users').child(auth.uid).child('role').val() === 'admin' || root.child('users').child(auth.uid).child('role').val() === 'subadmin') || (root.child('users').child(auth.uid).child('role').val() === 'worker' && data.exists() && data.child('status').val() === 'available' && newData.child('status').val() === 'claimed' && newData.child('claimedBy').val() === auth.uid && newData.child('createdBy').val() === data.child('createdBy').val() && newData.child('relatedJobKey').val() === data.child('relatedJobKey').val()))"
       }
     },
     "workerLedger": {

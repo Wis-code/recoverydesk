@@ -1,4 +1,4 @@
-const CACHE = "recoverydesk-v2-3-final-shell-1";
+const CACHE = "recoverydesk-v2-4-shell-1";
 const SHELL = [
   "./",
   "./index.html",
