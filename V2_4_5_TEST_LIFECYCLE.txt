@@ -1,0 +1,43 @@
+RECOVERYDESK V2.4.5 — TEST DATA LIFECYCLE FIX
+
+FIXED
+1. TEST MARKING IS NOW REVERSIBLE
+- Owner sees Mark test on an unmarked Customer/Job.
+- Once marked, the same control becomes Unmark test.
+- Unmark requires a reason and creates an Audit entry.
+- Explicitly unmarked records are not automatically selected again merely
+  because their name/email contains Test, Dummy or Sample.
+- If the record is still linked to another record that remains marked test,
+  linked cleanup protection still applies.
+
+2. CLEANUP SKIPS NONEXISTENT OPTIONAL PATHS
+- RecoveryDesk now checks whether optional legacy paths actually exist before
+  trying to delete them.
+- This fixes the repeated PERMISSION_DENIED caused by attempts to delete
+  /attachments/{jobKey} when the database has no attachments branch.
+- The same safety check is used for jobEdits, communications, customer maps,
+  worker-ledger review records and other linked cleanup paths.
+
+3. EXISTING V2.4.4 FIXES ARE PRESERVED
+- Same-account Google -> password sign-in linking.
+- bindTaskManagement/task-management fix.
+- Owner-scoped cleanup authorizations for actual legacy protected records.
+- Existing role, finance, legal-document and audit protections remain.
+
+DATABASE RULES
+V2.4.5 does not introduce a new rules change beyond the V2.4.4 rule set.
+If V2.4.4 database.rules.json is already published, you do not need to publish
+rules again for V2.4.5.
+
+DEPLOYMENT
+1. Upload/replace V2.4.5 files on GitHub main.
+2. Commit: Deploy RecoveryDesk V2.4.5 test lifecycle fix
+3. Wait for GitHub Pages green.
+4. Desktop: Ctrl+Shift+R.
+5. Phone/PWA: fully close, open the website in Chrome once, refresh, reopen.
+
+ACCEPTANCE
+- Mark a disposable job/customer as test -> button changes to Unmark test.
+- Unmark it -> it disappears from cleanup unless linked to another remaining test parent.
+- Run Owner Test Data Cleanup on the 4 jobs + 2 payments bundle.
+- Nonexistent attachments/jobEdits paths are skipped instead of failing.
