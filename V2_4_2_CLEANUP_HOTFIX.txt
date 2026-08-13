@@ -1,0 +1,31 @@
+RECOVERYDESK V2.4.2 — TEST CLEANUP PERMISSION HOTFIX
+
+Observed failure:
+PERMISSION_DENIED while deleting /documents/AGR-...
+
+Cause:
+RecoveryDesk correctly detected legacy test-linked documents, but older generated
+documents do not all contain the same jobKey/customerId linkage that the immutable
+document deletion rule expected. The Owner cleanup therefore stopped at the first
+legacy document even though the bundle itself was correctly identified as test data.
+
+Fix:
+- Adds a short-lived Owner-only cleanupAuthorization record.
+- The authorization contains ONLY the exact document IDs already displayed in the
+  reviewed Test Data Cleanup bundle.
+- Immutable document rules allow deletion only when:
+  * the document/test parent is explicitly marked test, OR
+  * that exact document ID has the Owner's temporary cleanup authorization.
+- The temporary authorization is removed in a finally block even if later cleanup fails.
+- Real documents are NOT made generally deletable.
+- Cleanup errors now display the Firebase error code/message instead of a generic failure.
+- PWA cache bumped.
+
+DEPLOYMENT ORDER — RULES CHANGED
+1. Firebase Realtime Database -> Rules.
+2. Replace with database.rules.json from V2.4.2 and Publish.
+3. Upload/replace V2.4.2 app files on GitHub main.
+4. Commit: Fix RecoveryDesk V2.4 test cleanup permissions
+5. Wait for GitHub Pages green.
+6. Hard refresh/reopen the PWA.
+7. Run Test Data Cleanup again and verify the reviewed bundle disappears.

@@ -98,7 +98,7 @@
       ".read": "auth != null && root.child('users').child(auth.uid).child('role').exists() && root.child('users').child(auth.uid).child('active').val() != false",
       "$documentId": {
         ".read": "auth != null && data.child('clientVisible').val() === true && root.child('customerAccess').child(auth.uid).child('active').val() != false && root.child('customerAccess').child(auth.uid).child('customerId').val() === data.child('customerId').val()",
-        ".write": "auth != null && ((!data.exists() && newData.exists() && ((root.child('users').child(auth.uid).child('role').val() === 'owner' || root.child('users').child(auth.uid).child('role').val() === 'admin' || root.child('users').child(auth.uid).child('role').val() === 'subadmin') || (root.child('users').child(auth.uid).child('role').val() === 'worker' && root.child('jobs').child(newData.child('jobKey').val()).child('assignedTo').val() === auth.uid))) || (root.child('users').child(auth.uid).child('role').val() === 'owner' && data.exists() && !newData.exists() && (data.child('testRecord').val() === true || root.child('jobs').child(data.child('jobKey').val()).child('testRecord').val() === true || root.child('customers').child(data.child('customerId').val()).child('testRecord').val() === true)))"
+        ".write": "auth != null && ((!data.exists() && newData.exists() && ((root.child('users').child(auth.uid).child('role').val() === 'owner' || root.child('users').child(auth.uid).child('role').val() === 'admin' || root.child('users').child(auth.uid).child('role').val() === 'subadmin') || (root.child('users').child(auth.uid).child('role').val() === 'worker' && root.child('jobs').child(newData.child('jobKey').val()).child('assignedTo').val() === auth.uid))) || (root.child('users').child(auth.uid).child('role').val() === 'owner' && data.exists() && !newData.exists() && (data.child('testRecord').val() === true || root.child('jobs').child(data.child('jobKey').val()).child('testRecord').val() === true || root.child('customers').child(data.child('customerId').val()).child('testRecord').val() === true || root.child('cleanupAuthorizations').child(auth.uid).child('documents').child($documentId).val() === true)))"
       }
     },
     "attachments": {
@@ -170,6 +170,12 @@
         "$entryId": {
           ".write": "auth != null && root.child('users').child(auth.uid).child('active').val() != false && ((root.child('users').child(auth.uid).child('role').val() === 'owner' || root.child('users').child(auth.uid).child('role').val() === 'admin' || root.child('users').child(auth.uid).child('role').val() === 'subadmin') || root.child('users').child(auth.uid).child('role').val() === 'finance')"
         }
+      }
+    },
+    "cleanupAuthorizations": {
+      ".read": false,
+      "$uid": {
+        ".write": "auth != null && auth.uid === $uid && root.child('users').child(auth.uid).child('role').val() === 'owner' && root.child('users').child(auth.uid).child('active').val() != false"
       }
     }
   }

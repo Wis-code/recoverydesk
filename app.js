@@ -4827,28 +4827,46 @@ function openTestDataCleanup() {
   const names=[...bundle.customerIds].map(id=>`${id} · ${state.data.customers[id]?.fullName||"Customer"}`);
   const body=`<div class="notice danger"><strong>Owner-only destructive action.</strong> RecoveryDesk detected records marked as test/dummy or clearly named Test/Dummy/Sample. Real records are not selected automatically.</div><div class="panel flat" style="margin-top:12px"><strong>${count} linked test record${count===1?"":"s"}</strong><p class="tiny muted">Customers: ${bundle.customerIds.size} · Jobs: ${bundle.jobKeys.size} · Devices: ${bundle.deviceIds.size} · Documents: ${bundle.documentIds.size} · Payments: ${bundle.paymentIds.size} · Tasks: ${bundle.taskIds.size} · Worker money: ${bundle.ledgerIds.size}</p>${names.length?`<p class="tiny">${names.map(esc).join("<br>")}</p>`:""}</div><label class="field"><span>Type DELETE TEST DATA to confirm *</span><input id="cleanupPhrase" autocomplete="off"></label>`;
   openModal({title:"Delete test/dummy data",subtitle:"Owner Administrator",body,actions:`<button class="secondary" data-modal-cancel>Cancel</button><button class="primary danger" id="confirmTestCleanup">Delete test data</button>`});modalHost.querySelector("[data-modal-cancel]").onclick=closeModal;
-  document.getElementById("confirmTestCleanup").onclick=async()=>{if(document.getElementById("cleanupPhrase").value.trim()!=="DELETE TEST DATA")return toast("Confirmation phrase does not match.","error");const button=document.getElementById("confirmTestCleanup");setBusy(button,true,"Deleting test data…");try{await deleteTestDataBundle(bundle);closeModal();toast("Test/dummy records removed.","success");}catch(error){console.error(error);toast("Cleanup stopped because an error occurred. Real records were not selected by this tool.","error");setBusy(button,false);}};
+  document.getElementById("confirmTestCleanup").onclick=async()=>{if(document.getElementById("cleanupPhrase").value.trim()!=="DELETE TEST DATA")return toast("Confirmation phrase does not match.","error");const button=document.getElementById("confirmTestCleanup");setBusy(button,true,"Deleting test data…");try{await deleteTestDataBundle(bundle);closeModal();toast("Test/dummy records removed.","success");}catch(error){console.error(error);toast(`Cleanup stopped: ${error?.code || error?.message || "unknown error"}. No additional records will be deleted.`,"error");setBusy(button,false);}};
 }
 
 async function deleteTestDataBundle(bundle){
-  // Mark selected parents first so immutable-child rules can verify this is test cleanup.
+  if (!isOwner()) throw new Error("Owner access required");
+
+  const cleanupAuthPath = `cleanupAuthorizations/${state.user.uid}`;
+  const cleanupAuthorization = {documents:{}};
+
+  // Mark selected parents first so linked immutable-child rules can verify test cleanup.
   for(const id of bundle.customerIds){await update(ref(db,`customers/${id}`),{testRecord:true});}
   for(const key of bundle.jobKeys){await update(ref(db,`jobs/${key}`),{testRecord:true});}
 
-  for(const id of bundle.documentIds){await remove(ref(db,`documents/${id}`));}
-  for(const key of bundle.jobKeys){
-    await remove(ref(db,`jobEdits/${key}`));
-    await remove(ref(db,`attachments/${key}`));
+  // Older generated documents do not all carry consistent jobKey/customerId fields.
+  // Authorize ONLY the exact document IDs that the Owner reviewed in this cleanup bundle.
+  for (const id of bundle.documentIds) cleanupAuthorization.documents[id] = true;
+
+  try {
+    if (bundle.documentIds.size) {
+      await set(ref(db, cleanupAuthPath), cleanupAuthorization);
+    }
+
+    for(const id of bundle.documentIds){await remove(ref(db,`documents/${id}`));}
+    for(const key of bundle.jobKeys){
+      await remove(ref(db,`jobEdits/${key}`));
+      await remove(ref(db,`attachments/${key}`));
+    }
+    for(const compound of bundle.ledgerIds){const [uid,id]=compound.split(":");await remove(ref(db,`workerLedgerReviews/${uid}/${id}`));await remove(ref(db,`workerLedger/${uid}/${id}`));}
+    for(const id of bundle.postIds){await remove(ref(db,`jobPosts/${id}`));}
+    for(const id of bundle.paymentIds){await remove(ref(db,`payments/${id}`));}
+    for(const id of bundle.taskIds){await remove(ref(db,`tasks/${id}`));}
+    for(const customerId of bundle.customerIds){await remove(ref(db,`communications/${customerId}`));await remove(ref(db,`customerJobs/${customerId}`));await remove(ref(db,`customerDevices/${customerId}`));}
+    for(const id of bundle.deviceIds){await remove(ref(db,`devices/${id}`));}
+    for(const key of bundle.jobKeys){await remove(ref(db,`jobs/${key}`));}
+    for(const id of bundle.customerIds){await remove(ref(db,`customers/${id}`));}
+    await recordAudit("deleted test data","system","test-cleanup",`${testDataCount(bundle)} linked test records removed by Owner`);
+  } finally {
+    // Never leave a cleanup authorization behind, even if a later delete fails.
+    try { await remove(ref(db, cleanupAuthPath)); } catch (cleanupError) { console.error("Could not clear cleanup authorization", cleanupError); }
   }
-  for(const compound of bundle.ledgerIds){const [uid,id]=compound.split(":");await remove(ref(db,`workerLedgerReviews/${uid}/${id}`));await remove(ref(db,`workerLedger/${uid}/${id}`));}
-  for(const id of bundle.postIds){await remove(ref(db,`jobPosts/${id}`));}
-  for(const id of bundle.paymentIds){await remove(ref(db,`payments/${id}`));}
-  for(const id of bundle.taskIds){await remove(ref(db,`tasks/${id}`));}
-  for(const customerId of bundle.customerIds){await remove(ref(db,`communications/${customerId}`));await remove(ref(db,`customerJobs/${customerId}`));await remove(ref(db,`customerDevices/${customerId}`));}
-  for(const id of bundle.deviceIds){await remove(ref(db,`devices/${id}`));}
-  for(const key of bundle.jobKeys){await remove(ref(db,`jobs/${key}`));}
-  for(const id of bundle.customerIds){await remove(ref(db,`customers/${id}`));}
-  await recordAudit("deleted test data","system","test-cleanup",`${testDataCount(bundle)} linked test records removed by Owner`);
 }
 
 function renderSettings(host) {
