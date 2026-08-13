@@ -2,7 +2,7 @@
 import {
   auth, db, firestore, storage, googleProvider, BOOTSTRAP_ADMIN_UID,
   onAuthStateChanged, signInWithEmailAndPassword, createUserWithEmailAndPassword,
-  sendEmailVerification, sendPasswordResetEmail, updatePassword, EmailAuthProvider, reauthenticateWithCredential, signInWithPopup, signInWithRedirect, getRedirectResult, signOut,
+  sendEmailVerification, sendPasswordResetEmail, updatePassword, EmailAuthProvider, reauthenticateWithCredential, linkWithCredential, signInWithPopup, signInWithRedirect, getRedirectResult, signOut,
   ref, get, set, update, remove, push, onValue, runTransaction,
   doc, getDoc, setDoc, deleteDoc,
   storageRef, uploadBytesResumable, getDownloadURL, deleteObject
@@ -4158,84 +4158,149 @@ function profileNameForSort(profile) {
   return profile.displayName || profile.realName || profile.name || profile.email || "";
 }
 
-function openTaskModal(job = null) {
+function openTaskModal(job = null, existingTask = null) {
+  const isEdit = Boolean(existingTask);
+  if (isEdit && !canManageTask(existingTask)) return;
+
   const staffOptions = values(state.data.users)
     .filter(profile => profile.active !== false)
     .map(profile => ({ uid: profile.key, ...profile }))
     .sort((a,b)=>profileNameForSort(a).localeCompare(profileNameForSort(b)));
 
+  const selectedJob = job || (existingTask?.jobKey ? jobByKey(existingTask.jobKey) : null);
+  const selectedAssignee = existingTask?.assignedTo ?? state.user.uid;
+
   const body = `
     <form id="taskForm">
-      <label class="field"><span>Task *</span><input name="title" required placeholder="e.g. Call customer with assessment result"></label>
-      <label class="field"><span>Description</span><textarea name="description"></textarea></label>
+      <label class="field"><span>Task *</span><input name="title" required value="${esc(existingTask?.title || "")}" placeholder="e.g. Call customer with assessment result"></label>
+      <label class="field"><span>Description</span><textarea name="description">${esc(existingTask?.description || "")}</textarea></label>
 
       <div class="form-grid three">
         <label class="field"><span>Assigned to</span>
           <select name="assignedTo" ${isAdmin() ? "" : "disabled"}>
+            <option value="">Unassigned</option>
             ${staffOptions.map(profile => `
-              <option value="${profile.uid}" ${profile.uid === state.user.uid ? "selected" : ""}>
-                ${esc(profile.displayName || profile.realName || profile.name || profile.email || profile.uid)}
+              <option value="${profile.uid}" ${selectedAssignee === profile.uid ? "selected" : ""}>
+                ${esc(profileDisplayName(profile))}
               </option>`).join("")}
           </select>
         </label>
 
-        <label class="field"><span>Due date</span><input name="dueAt" type="date"></label>
+        <label class="field"><span>Due date</span><input name="dueAt" type="date" value="${esc(existingTask?.dueAt || "")}"></label>
 
         <label class="field"><span>Priority</span>
           <select name="priority">
-            <option>Normal</option>
-            <option>Medium</option>
-            <option>High</option>
+            ${["Normal","Medium","High"].map(p => `<option ${existingTask?.priority === p ? "selected" : ""}>${p}</option>`).join("")}
           </select>
         </label>
+
+        ${isEdit ? `<label class="field"><span>Status</span>
+          <select name="status">
+            ${["open","blocked","completed"].map(s => `<option value="${s}" ${existingTask?.status === s ? "selected" : ""}>${s[0].toUpperCase()+s.slice(1)}</option>`).join("")}
+          </select>
+        </label>` : ""}
       </div>
 
-      ${job ? `<div class="notice info">This task will be linked to ${esc(job.jobId)}.</div>` : ""}
+      ${selectedJob ? `<div class="notice info">Linked to ${esc(selectedJob.jobId || selectedJob.key)}.</div>` : ""}
+      ${isEdit && isArchived(existingTask) ? `<div class="notice warning">This task is archived. Restore it before returning it to normal task queues.</div>` : ""}
     </form>`;
 
   openModal({
-    title: "New task",
-    subtitle: job ? job.jobId : "Personal / operational task",
+    title: isEdit ? "Manage task" : "New task",
+    subtitle: selectedJob ? (selectedJob.jobId || selectedJob.key) : "Personal / operational task",
     body,
-    actions: `<button class="secondary" data-modal-cancel>Cancel</button><button class="primary" id="saveTaskBtn">${icon("check",17)} Create task</button>`
+    actions: `
+      <button class="secondary" data-modal-cancel>Cancel</button>
+      ${isEdit && isAdmin() ? `<button class="secondary" id="archiveTaskBtn">${isArchived(existingTask) ? "Restore" : "Archive"}</button>` : ""}
+      ${isEdit && isAdmin() ? `<button class="secondary danger" id="deleteTaskBtn">Delete</button>` : ""}
+      <button class="primary" id="saveTaskBtn">${isEdit ? "Save task" : `${icon("check",17)} Create task`}</button>`
   });
 
   modalHost.querySelector("[data-modal-cancel]").onclick = closeModal;
+
+  document.getElementById("archiveTaskBtn")?.addEventListener("click", async () => {
+    closeModal();
+    await archiveRecord(`tasks/${existingTask.key}`, "task", existingTask.key, existingTask.title, !isArchived(existingTask));
+  });
+
+  document.getElementById("deleteTaskBtn")?.addEventListener("click", async () => {
+    const reason = await managementReasonModal({
+      title: "Delete task",
+      subtitle: existingTask.title || existingTask.key,
+      warning: "Task deletion is permanent. Completed business-history tasks should usually be archived instead.",
+      label: "Reason for deletion *",
+      confirmText: "Delete task"
+    });
+    if (!reason) return;
+    try {
+      await remove(ref(db, `tasks/${existingTask.key}`));
+      await recordAudit("deleted", "task", existingTask.key, reason);
+      toast("Task deleted.", "success");
+    } catch (error) {
+      console.error(error);
+      toast("Task could not be deleted.", "error");
+    }
+  });
 
   document.getElementById("saveTaskBtn").onclick = async () => {
     const form = document.getElementById("taskForm");
     if (!form.reportValidity()) return;
     const data = new FormData(form);
-    const assignedTo = isAdmin() ? data.get("assignedTo") : state.user.uid;
-    const taskRef = push(ref(db, "tasks"));
+    const assignedTo = isAdmin()
+      ? String(data.get("assignedTo") || "")
+      : (existingTask?.assignedTo || state.user.uid);
+    const taskKey = existingTask?.key || push(ref(db, "tasks")).key;
     const button = document.getElementById("saveTaskBtn");
     setBusy(button, true);
 
     try {
-      await set(taskRef, {
+      const patch = {
         title: data.get("title").trim(),
         description: String(data.get("description") || "").trim(),
         assignedTo,
-        createdBy: state.user.uid,
-        jobKey: job?.key || "",
-        jobId: job?.jobId || "",
-        customerId: job?.customerId || "",
+        assignedToName: assignedTo ? staffName(assignedTo) : "",
+        jobKey: selectedJob?.key || existingTask?.jobKey || "",
+        jobId: selectedJob?.jobId || existingTask?.jobId || "",
+        customerId: selectedJob?.customerId || existingTask?.customerId || "",
         dueAt: data.get("dueAt") || "",
         priority: data.get("priority") || "Normal",
-        status: "open",
-        createdAt: now(),
-        updatedAt: now()
-      });
+        status: isEdit ? (data.get("status") || existingTask?.status || "open") : "open",
+        updatedAt: now(),
+        updatedBy: state.user.uid
+      };
 
-      await recordAudit("created", "task", taskRef.key, data.get("title").trim());
+      if (!isEdit) {
+        patch.createdBy = state.user.uid;
+        patch.createdAt = now();
+      }
+
+      await update(ref(db, `tasks/${taskKey}`), patch);
+      await recordAudit(isEdit ? "updated" : "created", "task", taskKey, patch.title);
       closeModal();
-      toast("Task created.", "success");
-    } catch {
-      toast("Task could not be created.", "error");
+      toast(isEdit ? "Task updated." : "Task created.", "success");
+    } catch (error) {
+      console.error(error);
+      toast("Task could not be saved.", "error");
       setBusy(button, false);
     }
   };
 }
+
+function bindTaskManagement(scope = document) {
+  scope.querySelectorAll("[data-task-manage]").forEach(button => {
+    button.onclick = event => {
+      event.stopPropagation();
+      const key = button.dataset.taskManage;
+      const task = state.data.tasks?.[key];
+      if (!task) return;
+      openTaskModal(
+        task.jobKey ? jobByKey(task.jobKey) : null,
+        { key, ...task }
+      );
+    };
+  });
+}
+
 
 function financeCard(label, amount, cls, foot) {
   return `
@@ -4834,7 +4899,7 @@ async function deleteTestDataBundle(bundle){
   if (!isOwner()) throw new Error("Owner access required");
 
   const cleanupAuthPath = `cleanupAuthorizations/${state.user.uid}`;
-  const cleanupAuthorization = {documents:{}};
+  const cleanupAuthorization = {documents:{}, attachments:{}};
 
   // Mark selected parents first so linked immutable-child rules can verify test cleanup.
   for(const id of bundle.customerIds){await update(ref(db,`customers/${id}`),{testRecord:true});}
@@ -4843,10 +4908,11 @@ async function deleteTestDataBundle(bundle){
   // Older generated documents do not all carry consistent jobKey/customerId fields.
   // Authorize ONLY the exact document IDs that the Owner reviewed in this cleanup bundle.
   for (const id of bundle.documentIds) cleanupAuthorization.documents[id] = true;
+  for (const key of bundle.jobKeys) cleanupAuthorization.attachments[key] = true;
 
   let cleanupAuthorizationCreated = false;
   try {
-    if (bundle.documentIds.size) {
+    if (bundle.documentIds.size || bundle.jobKeys.size) {
       await set(ref(db, cleanupAuthPath), cleanupAuthorization);
       cleanupAuthorizationCreated = true;
     }
@@ -4922,11 +4988,19 @@ function renderSettings(host) {
       <section class="panel form-section">
         <div class="panel-head"><div><h2>Password & sign-in</h2><p>Email/password users can change their password here. Google sign-in remains managed by Google.</p></div></div>
         ${state.user?.providerData?.some(provider => provider.providerId === "password") ? `
-          <label class="field"><span>Current password</span><input id="currentPassword" type="password"></label>
-          <label class="field"><span>New password</span><input id="newPassword" type="password" minlength="6"></label>
-          <label class="field"><span>Confirm new password</span><input id="confirmNewPassword" type="password" minlength="6"></label>
+          <div class="notice success">Password sign-in is enabled for this account.</div>
+          <label class="field"><span>Current password</span><input id="currentPassword" type="password" autocomplete="current-password"></label>
+          <label class="field"><span>New password</span><input id="newPassword" type="password" minlength="6" autocomplete="new-password"></label>
+          <label class="field"><span>Confirm new password</span><input id="confirmNewPassword" type="password" minlength="6" autocomplete="new-password"></label>
           <button class="primary" id="changePasswordBtn">${icon("shield",17)} Change password</button>
-        ` : `<div class="notice info">This account signs in through Google. Password changes are handled by your Google account.</div>`}
+        ` : `
+          <div class="notice info">
+            This account currently signs in with Google only. Add a password to the same Firebase account so you can use either Google or email/password without changing your RecoveryDesk UID or role.
+          </div>
+          <label class="field"><span>New password</span><input id="linkPassword" type="password" minlength="6" autocomplete="new-password"></label>
+          <label class="field"><span>Confirm password</span><input id="linkPasswordConfirm" type="password" minlength="6" autocomplete="new-password"></label>
+          <button class="primary" id="enablePasswordSignInBtn">${icon("shield",17)} Enable password sign-in</button>
+        `}
       </section>
 
     ${canManageCriticalSettings() ? `
@@ -5017,6 +5091,35 @@ function renderSettings(host) {
       toast("Display name could not be saved.", "error");
     }
   };
+
+  document.getElementById("enablePasswordSignInBtn")?.addEventListener("click", async event => {
+    const password = document.getElementById("linkPassword")?.value || "";
+    const confirm = document.getElementById("linkPasswordConfirm")?.value || "";
+    if (!state.user?.email) return toast("This account has no email address to link.", "error");
+    if (password.length < 6) return toast("Use a password with at least 6 characters.", "error");
+    if (password !== confirm) return toast("The passwords do not match.", "error");
+
+    const button = event.currentTarget;
+    setBusy(button, true, "Enabling…");
+    try {
+      const credential = EmailAuthProvider.credential(state.user.email, password);
+      const result = await linkWithCredential(state.user, credential);
+      state.user = result.user;
+      toast("Password sign-in enabled. You can now use Google or email/password.", "success");
+      renderCurrentView();
+    } catch (error) {
+      console.error(error);
+      const code = error?.code || "";
+      const message =
+        code === "auth/email-already-in-use" || code === "auth/credential-already-in-use"
+          ? "That email/password credential is already attached to another Firebase account. Do not create another account; contact the Owner to reconcile it."
+          : code === "auth/requires-recent-login"
+            ? "For security, sign out and sign back in with Google, then enable password sign-in again."
+            : `Password sign-in could not be enabled${code ? ` (${code})` : ""}.`;
+      toast(message, "error");
+      setBusy(button, false);
+    }
+  });
 
   document.getElementById("changePasswordBtn")?.addEventListener("click", async () => {
     const current = document.getElementById("currentPassword").value;

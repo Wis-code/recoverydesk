@@ -1,0 +1,40 @@
+RECOVERYDESK V2.4.4 — STABILITY + PASSWORD SIGN-IN PASS
+
+This build combines the three issues discovered during live testing.
+
+1. TASK UI CRASH FIX
+- Restores bindTaskManagement(), which V2.4 called but did not ship.
+- Task manage/edit now supports title, description, deadline, priority, status,
+  assignment/unassignment, archive/restore and safe delete according to role.
+
+2. GOOGLE ACCOUNT -> PASSWORD SIGN-IN
+- Existing Google-only Firebase accounts now get an "Enable password sign-in"
+  section in Settings.
+- The password credential is LINKED to the same Firebase user using
+  EmailAuthProvider + linkWithCredential.
+- This preserves the same Firebase UID, RecoveryDesk role and business history.
+- Existing password users retain the normal change-password flow.
+- RecoveryDesk reports linking failures instead of pretending it succeeded.
+
+3. TEST DATA CLEANUP
+- Legacy attachment branches are authorized only for the exact job keys in the
+  Owner-reviewed cleanup bundle.
+- The temporary cleanup authorization is scoped to the signed-in Owner and is
+  removed after cleanup.
+- Normal real-job attachments remain protected.
+
+DEPLOYMENT ORDER — DATABASE RULES CHANGED
+1. Firebase Realtime Database -> Rules.
+2. Replace with V2.4.4 database.rules.json and Publish.
+3. Upload/replace V2.4.4 files on GitHub main.
+4. Commit: Deploy RecoveryDesk V2.4.4 stability fixes
+5. Wait for GitHub Pages green.
+6. Desktop: Ctrl+Shift+R.
+7. Phone/PWA: fully close, open website in Chrome once, refresh, reopen PWA.
+
+ACCEPTANCE TESTS
+- Owner and Worker Google sign-in enters the app.
+- Jobs/Tasks pages do not throw bindTaskManagement ReferenceError.
+- Google-only account: Settings -> Password & sign-in -> Enable password sign-in.
+- Sign out and verify the SAME email can then sign in with the new password.
+- Owner test cleanup removes the reviewed test bundle without attachment permission errors.

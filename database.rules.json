@@ -108,7 +108,7 @@
           ".read": "auth != null && data.child('clientVisible').val() === true && root.child('customerAccess').child(auth.uid).child('active').val() != false && root.child('customerAccess').child(auth.uid).child('customerId').val() === data.child('customerId').val()",
           ".write": "auth != null && ((root.child('users').child(auth.uid).child('role').val() === 'owner' || root.child('users').child(auth.uid).child('role').val() === 'admin' || root.child('users').child(auth.uid).child('role').val() === 'subadmin') || (root.child('users').child(auth.uid).child('role').val() === 'worker' && root.child('jobs').child($jobKey).child('assignedTo').val() === auth.uid)) && root.child('users').child(auth.uid).child('active').val() != false"
         },
-        ".write": "auth != null && root.child('users').child(auth.uid).child('role').val() === 'owner' && root.child('users').child(auth.uid).child('active').val() != false && root.child('jobs').child($jobKey).child('testRecord').val() === true && data.exists() && !newData.exists()"
+        ".write": "auth != null && root.child('users').child(auth.uid).child('role').val() === 'owner' && root.child('users').child(auth.uid).child('active').val() != false && data.exists() && !newData.exists() && (root.child('jobs').child($jobKey).child('testRecord').val() === true || root.child('cleanupAuthorizations').child(auth.uid).child('attachments').child($jobKey).val() === true)"
       }
     },
     "audit": {
