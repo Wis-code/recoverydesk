@@ -130,6 +130,25 @@ function profileDisplay(profile = state.staff) {
   return profile.displayName || profile.realName || profile.name || state.user?.email || "User";
 }
 
+function profilePhotoUrl(profile = state.staff) {
+  return (
+    profile?.photoURL ||
+    profile?.photoUrl ||
+    profile?.avatarUrl ||
+    profile?.profilePhotoUrl ||
+    (profile === state.staff ? state.user?.photoURL : "") ||
+    ""
+  );
+}
+
+function avatarMarkup(name, profile = null, className = "avatar") {
+  const url = profilePhotoUrl(profile);
+  if (url) {
+    return `<span class="${className} has-photo"><img src="${esc(url)}" alt="${esc(name || "Profile photo")}" loading="lazy" referrerpolicy="no-referrer"></span>`;
+  }
+  return `<span class="${className}">${esc(initials(name || ""))}</span>`;
+}
+
 function profileRealName(profile = state.staff) {
   if (!profile) return "";
   return profile.realName || profile.name || profile.displayName || "";

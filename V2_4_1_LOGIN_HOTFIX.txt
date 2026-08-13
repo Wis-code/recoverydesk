@@ -1,0 +1,28 @@
+RECOVERYDESK V2.4.1 LOGIN HOTFIX
+
+CAUSE
+V2.4 referenced avatarMarkup() while rendering the signed-in Staff/Admin shell,
+but that helper was omitted from app.js. Authentication succeeded, then the
+render callback crashed with:
+ReferenceError: avatarMarkup is not defined
+
+The crash made authenticated existing users appear to fall back to the Access
+Request screen even though their /users/{uid} records and active flags were
+correct.
+
+FIX
+- Restores the missing avatarMarkup() and profilePhotoUrl() helpers globally.
+- Keeps existing Google/stored profile photo support.
+- Bumps the PWA cache so phones/browsers fetch the repaired app.js.
+- Does NOT change Realtime Database rules, roles, user records, customers,
+  jobs, finance data, or V2.4 lifecycle logic.
+
+DEPLOYMENT
+1. Upload/replace these V2.4.1 files on GitHub main.
+2. Commit: Fix RecoveryDesk V2.4 login render regression
+3. Wait for GitHub Pages to turn green.
+4. Desktop: Ctrl+Shift+R.
+5. Phone/PWA: fully close it; open RecoveryDesk in Chrome once and refresh;
+   then reopen the installed PWA.
+6. Sign in with an existing Owner/Worker account. It should enter the app
+   directly instead of showing Access Request.
