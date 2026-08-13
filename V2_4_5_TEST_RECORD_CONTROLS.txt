@@ -1,0 +1,44 @@
+RECOVERYDESK V2.4.5 — TEST RECORD CONTROL + CLEANUP ROBUSTNESS
+
+WHAT LIVE TESTING CONFIRMED
+The actual remaining test data is in real nodes such as Jobs and Payments.
+Some optional legacy branches (for example /attachments/{jobKey}) do not exist
+at all in this database. Previous cleanup versions still attempted to delete
+those nonexistent paths and security rules correctly rejected the write.
+
+FIXES
+1. CLEANUP ONLY TOUCHES DATA THAT EXISTS
+- Optional legacy paths are checked with get() before remove().
+- Nonexistent attachment/job-edit/communication/index branches are skipped.
+- Cleanup authorization is no longer created for nonexistent attachment branches.
+- The reviewed Jobs and Payments can therefore be reached instead of cleanup
+  stopping on an imaginary path.
+
+2. OWNER TEST MARKER IS REVERSIBLE
+- Owner can Mark Test or Unmark Test on an existing Customer.
+- Owner can Mark Test or Unmark Test on an existing Job.
+- Owner can Mark Test or Unmark Test on an individual Payment.
+- Every mark/unmark requires a reason and writes to Audit.
+- Unmarking sets testExcludedFromCleanup=true so name-based Test/Dummy/Sample
+  detection does not immediately select that record again.
+- A linked child can still be included when its parent Job/Customer remains test;
+  this prevents broken partial cleanup sets.
+
+3. EXISTING V2.4.4 FIXES PRESERVED
+- Google-only users can link a password to the same Firebase UID.
+- bindTaskManagement task UI crash remains fixed.
+- Existing Owner/Worker roles and business history are unchanged.
+
+DEPLOYMENT
+No additional rule change beyond the V2.4.4 rules is required by this patch.
+If V2.4.4 rules are already published:
+1. Upload/replace V2.4.5 files on GitHub main.
+2. Commit: Deploy RecoveryDesk V2.4.5 test record controls
+3. Wait for GitHub Pages green.
+4. Hard refresh / reopen the phone PWA.
+
+TEST
+- Open one of the four test Jobs -> Unmark Test -> it leaves cleanup.
+- Mark it again -> it returns to cleanup.
+- On a payment row, Mark Test / Unmark Test works the same way.
+- Run Test Data Cleanup; nonexistent optional branches are skipped.
