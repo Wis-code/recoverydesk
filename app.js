@@ -4844,9 +4844,11 @@ async function deleteTestDataBundle(bundle){
   // Authorize ONLY the exact document IDs that the Owner reviewed in this cleanup bundle.
   for (const id of bundle.documentIds) cleanupAuthorization.documents[id] = true;
 
+  let cleanupAuthorizationCreated = false;
   try {
     if (bundle.documentIds.size) {
       await set(ref(db, cleanupAuthPath), cleanupAuthorization);
+      cleanupAuthorizationCreated = true;
     }
 
     for(const id of bundle.documentIds){await remove(ref(db,`documents/${id}`));}
@@ -4864,8 +4866,11 @@ async function deleteTestDataBundle(bundle){
     for(const id of bundle.customerIds){await remove(ref(db,`customers/${id}`));}
     await recordAudit("deleted test data","system","test-cleanup",`${testDataCount(bundle)} linked test records removed by Owner`);
   } finally {
-    // Never leave a cleanup authorization behind, even if a later delete fails.
-    try { await remove(ref(db, cleanupAuthPath)); } catch (cleanupError) { console.error("Could not clear cleanup authorization", cleanupError); }
+    // Never leave a cleanup authorization behind when one was actually created.
+    if (cleanupAuthorizationCreated) {
+      try { await remove(ref(db, cleanupAuthPath)); }
+      catch (cleanupError) { console.error("Could not clear cleanup authorization", cleanupError); }
+    }
   }
 }
 

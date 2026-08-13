@@ -1,0 +1,28 @@
+RECOVERYDESK V2.4.3 — TEST CLEANUP FOLLOW-UP HOTFIX
+
+Observed after V2.4.2:
+- Legacy test documents were successfully removed (Documents count dropped to 0).
+- Cleanup then stopped later with PERMISSION_DENIED.
+- Console also showed a secondary "Could not clear cleanup authorization" warning.
+
+Cause:
+The cleanup removes the whole /attachments/{jobKey} branch for each test job.
+Normal rules only granted writes at individual attachment child records, so a
+parent-branch delete was rejected even for the Owner.
+
+Fix:
+- Adds an Owner-only parent delete rule for /attachments/{jobKey}, and only when
+  the linked job is already marked testRecord=true.
+- Does not make normal attachments generally deletable.
+- Stops attempting to clear a temporary document cleanup authorization when no
+  authorization was created during that run.
+- PWA cache bumped.
+
+DEPLOYMENT ORDER — DATABASE RULES CHANGED
+1. Firebase -> Realtime Database -> Rules.
+2. Replace with V2.4.3 database.rules.json and Publish.
+3. Upload/replace V2.4.3 files on GitHub main.
+4. Commit: Fix RecoveryDesk V2.4 test attachment cleanup
+5. Wait for GitHub Pages green.
+6. Hard refresh / reopen PWA.
+7. Run Test Data Cleanup again.
