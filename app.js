@@ -1858,7 +1858,7 @@ function renderCustomerDetail(host) {
       <div class="head-actions">
         ${accessRequests.length && isOps() ? `<button class="secondary" id="customerAccessBtn">${icon("link",17)} Access request</button>` : ""}
         ${isAdmin() ? `<button class="secondary" id="customerArchiveBtn">${icon("archive",17)} ${isArchived(customer) ? "Restore" : "Archive"}</button>` : ""}
-        ${isOwner() ? `<button class="secondary" id="markCustomerTestBtn">${icon("shield",17)} ${customer.testRecord ? "Unmark test" : "Mark test"}</button>` : ""}
+        ${isOwner() && !customer.testRecord ? `<button class="secondary" id="markCustomerTestBtn">${icon("shield",17)} Mark test</button>` : ""}
         ${isOps() ? `<button class="secondary" id="editCustomerBtn">${icon("edit",17)} Edit</button>` : ""}
         ${isOps() && !isArchived(customer) ? `<button class="primary" id="customerNewIntake">${icon("plus",17)} New intake</button>` : ""}
       </div>
@@ -1911,12 +1911,7 @@ function renderCustomerDetail(host) {
   document.getElementById("backCustomers").onclick = () => navigate("customers");
   document.getElementById("editCustomerBtn")?.addEventListener("click", () => openCustomerModal(customer));
   document.getElementById("customerArchiveBtn")?.addEventListener("click", () => archiveRecord(`customers/${customer.customerId}`, "customer", customer.customerId, customer.fullName, !isArchived(customer)));
-  document.getElementById("markCustomerTestBtn")?.addEventListener("click", () => {
-    const path = `customers/${customer.customerId}`;
-    return customer.testRecord
-      ? unmarkLegacyTestRecord(path, "customer", customer.customerId, customer.fullName)
-      : markLegacyTestRecord(path, "customer", customer.customerId, customer.fullName);
-  });
+  document.getElementById("markCustomerTestBtn")?.addEventListener("click", () => markLegacyTestRecord(`customers/${customer.customerId}`, "customer", customer.customerId, customer.fullName));
   document.getElementById("customerNewIntake")?.addEventListener("click", () => startIntake(customer.customerId));
   document.getElementById("addFollowupBtn")?.addEventListener("click", () => openFollowupModal(customer));
   document.getElementById("customerAccessBtn")?.addEventListener("click", () => openCustomerPortalRequests(customer.customerId));
@@ -2859,38 +2854,6 @@ async function markLegacyTestRecord(path, recordType, recordId, label) {
   }
 }
 
-async function unmarkLegacyTestRecord(path, recordType, recordId, label) {
-  if (!isOwner()) return;
-  const reason = await managementReasonModal({
-    title: "Unmark test data",
-    subtitle: label || recordId,
-    warning: "This removes the explicit test flag and protects this record from test cleanup unless it is still linked to another test record.",
-    label: "Reason for unmarking *",
-    minLength: 5,
-    confirmText: "Unmark test"
-  });
-  if (!reason) return;
-
-  try {
-    await update(ref(db, path), {
-      testRecord: false,
-      testMarkedAt: null,
-      testMarkedBy: null,
-      testMarkReason: null,
-      testUnmarked: true,
-      testUnmarkedAt: now(),
-      testUnmarkedBy: state.user.uid,
-      testUnmarkReason: reason,
-      updatedAt: now()
-    });
-    await recordAudit("unmarked test data", recordType, recordId, reason);
-    toast("Test flag removed. RecoveryDesk will no longer treat this record as test data by name alone.", "success");
-  } catch (error) {
-    console.error(error);
-    toast("The test flag could not be removed.", "error");
-  }
-}
-
 function canManageTask(task) {
   return isAdmin() || task?.assignedTo === state.user?.uid;
 }
@@ -2975,7 +2938,7 @@ function renderJobDetail(host) {
       </div>
       <div class="head-actions">
         ${isAdmin() ? `<button class="secondary" id="jobArchiveBtn">${icon("archive",17)} ${isArchived(job) ? "Restore" : "Archive"}</button>` : ""}
-        ${isOwner() ? `<button class="secondary" id="markJobTestBtn">${icon("shield",17)} ${job.testRecord ? "Unmark test" : "Mark test"}</button>` : ""}
+        ${isOwner() && !job.testRecord ? `<button class="secondary" id="markJobTestBtn">${icon("shield",17)} Mark test</button>` : ""}
         ${canControlJob(job) && !isArchived(job) ? `<button class="secondary" id="jobTaskBtn">${icon("tasks",17)} Add task</button>` : ""}
         <button class="secondary" id="jobEmailUpdateBtn">${icon("file",17)} Email update</button>
         ${canControlJob(job) ? `<button class="secondary" id="jobAgreementBtn">${icon("signature",17)} Agreement</button>` : ""}
@@ -3133,12 +3096,7 @@ function renderJobDetail(host) {
 
   document.getElementById("backJobs").onclick = () => navigate("jobs");
   document.getElementById("jobArchiveBtn")?.addEventListener("click", () => archiveRecord(`jobs/${job.key}`, "job", job.jobId || job.key, job.jobId || job.key, !isArchived(job)));
-  document.getElementById("markJobTestBtn")?.addEventListener("click", () => {
-    const path = `jobs/${job.key}`;
-    return job.testRecord
-      ? unmarkLegacyTestRecord(path, "job", job.jobId || job.key, job.jobId || job.key)
-      : markLegacyTestRecord(path, "job", job.jobId || job.key, job.jobId || job.key);
-  });
+  document.getElementById("markJobTestBtn")?.addEventListener("click", () => markLegacyTestRecord(`jobs/${job.key}`, "job", job.jobId || job.key, job.jobId || job.key));
   document.getElementById("saveJobControls")?.addEventListener("click", () => saveJobControls(job));
   document.getElementById("submitJobRecord")?.addEventListener("click", () => submitJobRecord(job));
   document.getElementById("recordPaymentBtn")?.addEventListener("click", () => openPaymentModal(job));
@@ -4911,20 +4869,8 @@ function looksLikeTestText(value="") {
 }
 
 function collectTestData() {
-  const customerIds = new Set(values(state.data.customers).filter(c =>
-    c.testRecord === true ||
-    (c.testUnmarked !== true && (
-      looksLikeTestText(c.fullName) ||
-      looksLikeTestText(c.email) ||
-      looksLikeTestText(c.address) ||
-      ["08000000000","00000000000"].includes(normalizePhone(c.phone))
-    ))
-  ).map(c=>c.key));
-  const jobs = values(state.data.jobs).filter(j =>
-    j.testRecord === true ||
-    customerIds.has(j.customerId) ||
-    (j.testUnmarked !== true && (looksLikeTestText(j.customerNameSnapshot) || looksLikeTestText(j.clientName)))
-  );
+  const customerIds = new Set(values(state.data.customers).filter(c => c.testRecord === true || looksLikeTestText(c.fullName) || looksLikeTestText(c.email) || looksLikeTestText(c.address) || ["08000000000","00000000000"].includes(normalizePhone(c.phone))).map(c=>c.key));
+  const jobs = values(state.data.jobs).filter(j => j.testRecord === true || customerIds.has(j.customerId) || looksLikeTestText(j.customerNameSnapshot) || looksLikeTestText(j.clientName));
   const jobKeys = new Set(jobs.map(j=>j.key));
   const deviceIds = new Set(values(state.data.devices).filter(d => d.testRecord === true || customerIds.has(d.customerId)).map(d=>d.key));
   const documentIds = new Set(values(state.data.documents).filter(d => d.testRecord === true || customerIds.has(d.customerId) || jobKeys.has(d.jobKey)).map(d=>d.key));
@@ -4949,14 +4895,6 @@ function openTestDataCleanup() {
   document.getElementById("confirmTestCleanup").onclick=async()=>{if(document.getElementById("cleanupPhrase").value.trim()!=="DELETE TEST DATA")return toast("Confirmation phrase does not match.","error");const button=document.getElementById("confirmTestCleanup");setBusy(button,true,"Deleting test data…");try{await deleteTestDataBundle(bundle);closeModal();toast("Test/dummy records removed.","success");}catch(error){console.error(error);toast(`Cleanup stopped: ${error?.code || error?.message || "unknown error"}. No additional records will be deleted.`,"error");setBusy(button,false);}};
 }
 
-async function removeIfExists(path) {
-  const target = ref(db, path);
-  const snapshot = await get(target);
-  if (!snapshot.exists()) return false;
-  await remove(target);
-  return true;
-}
-
 async function deleteTestDataBundle(bundle){
   if (!isOwner()) throw new Error("Owner access required");
 
@@ -4979,27 +4917,19 @@ async function deleteTestDataBundle(bundle){
       cleanupAuthorizationCreated = true;
     }
 
-    for(const id of bundle.documentIds){await removeIfExists(`documents/${id}`);}
+    for(const id of bundle.documentIds){await remove(ref(db,`documents/${id}`));}
     for(const key of bundle.jobKeys){
-      await removeIfExists(`jobEdits/${key}`);
-      await removeIfExists(`attachments/${key}`);
+      await remove(ref(db,`jobEdits/${key}`));
+      await remove(ref(db,`attachments/${key}`));
     }
-    for(const compound of bundle.ledgerIds){
-      const [uid,id]=compound.split(":");
-      await removeIfExists(`workerLedgerReviews/${uid}/${id}`);
-      await removeIfExists(`workerLedger/${uid}/${id}`);
-    }
-    for(const id of bundle.postIds){await removeIfExists(`jobPosts/${id}`);}
-    for(const id of bundle.paymentIds){await removeIfExists(`payments/${id}`);}
-    for(const id of bundle.taskIds){await removeIfExists(`tasks/${id}`);}
-    for(const customerId of bundle.customerIds){
-      await removeIfExists(`communications/${customerId}`);
-      await removeIfExists(`customerJobs/${customerId}`);
-      await removeIfExists(`customerDevices/${customerId}`);
-    }
-    for(const id of bundle.deviceIds){await removeIfExists(`devices/${id}`);}
-    for(const key of bundle.jobKeys){await removeIfExists(`jobs/${key}`);}
-    for(const id of bundle.customerIds){await removeIfExists(`customers/${id}`);}
+    for(const compound of bundle.ledgerIds){const [uid,id]=compound.split(":");await remove(ref(db,`workerLedgerReviews/${uid}/${id}`));await remove(ref(db,`workerLedger/${uid}/${id}`));}
+    for(const id of bundle.postIds){await remove(ref(db,`jobPosts/${id}`));}
+    for(const id of bundle.paymentIds){await remove(ref(db,`payments/${id}`));}
+    for(const id of bundle.taskIds){await remove(ref(db,`tasks/${id}`));}
+    for(const customerId of bundle.customerIds){await remove(ref(db,`communications/${customerId}`));await remove(ref(db,`customerJobs/${customerId}`));await remove(ref(db,`customerDevices/${customerId}`));}
+    for(const id of bundle.deviceIds){await remove(ref(db,`devices/${id}`));}
+    for(const key of bundle.jobKeys){await remove(ref(db,`jobs/${key}`));}
+    for(const id of bundle.customerIds){await remove(ref(db,`customers/${id}`));}
     await recordAudit("deleted test data","system","test-cleanup",`${testDataCount(bundle)} linked test records removed by Owner`);
   } finally {
     // Never leave a cleanup authorization behind when one was actually created.
