@@ -77,12 +77,13 @@ export function buildDocumentHtml({ type, number, company, customer, job, device
         <table class="doc-table">
           <thead><tr><th>Description</th><th class="right">Amount</th></tr></thead>
           <tbody>
-            ${assessment ? `<tr><td>Assessment / diagnostic service</td><td class="right">${formatMoney(assessment)}</td></tr>` : ""}
-            ${recovery ? `<tr><td>Data recovery service</td><td class="right">${formatMoney(recovery)}</td></tr>` : ""}
-            ${discount ? `<tr><td>Discount</td><td class="right">-${formatMoney(discount)}</td></tr>` : ""}
+            ${assessment ? `<tr><td>Diagnostic / assessment service (credited into accepted quote)</td><td class="right">${formatMoney(assessment)}</td></tr>` : ""}
+            ${recovery ? `<tr><td>Data recovery service after diagnostic credit</td><td class="right">${formatMoney(recovery)}</td></tr>` : ""}
           </tbody>
           <tfoot>
-            <tr><th>Total</th><th class="right">${formatMoney(total)}</th></tr>
+            <tr><td>Subtotal</td><td class="right">${formatMoney(assessment + recovery)}</td></tr>
+            ${discount ? `<tr><td>Discount</td><td class="right">-${formatMoney(discount)}</td></tr>` : ""}
+            <tr><th>Final total</th><th class="right">${formatMoney(total)}</th></tr>
             <tr><td>Paid</td><td class="right">${formatMoney(paid)}</td></tr>
             <tr><th>Balance due</th><th class="right">${formatMoney(balance)}</th></tr>
           </tfoot>
@@ -133,8 +134,11 @@ export function buildDocumentHtml({ type, number, company, customer, job, device
         recovery procedures on the submitted device(s).</p>
 
         <h3>Assessment and recovery</h3>
-        <p>The assessment determines the apparent condition of the device and whether recovery appears feasible.
+        <p>The diagnostic assessment is a professional service. If a recovery quotation is accepted, the diagnostic fee is credited into that quotation.
         Data recovery cannot be guaranteed, and particular files may remain unavailable, incomplete or corrupt.</p>
+
+        <h3>Current in-house technical boundary</h3>
+        <p>Hardware-level work that requires soldering, PCB/component repair, head replacement, platter work, clean-room intervention or similar invasive procedures is not performed as an ordinary in-house recovery procedure unless separately agreed as specialist escalation.</p>
 
         <h3>Risk acknowledgement</h3>
         <p>Damaged or unstable storage devices may deteriorate or fail during reasonable assessment or recovery attempts.
@@ -142,7 +146,7 @@ export function buildDocumentHtml({ type, number, company, customer, job, device
         liability where exclusion is prohibited by applicable law.</p>
 
         <h3>Payment</h3>
-        <p>The assessment fee is ${formatMoney(job?.assessmentFee || 0)}.
+        <p>The diagnostic fee is ${formatMoney(job?.assessmentFee || 0)}.
         Any additional recovery fee will be communicated for approval before chargeable recovery work proceeds.
         Unless otherwise agreed, recovered data and/or the device may be released after applicable charges are paid.</p>
 
@@ -191,27 +195,104 @@ export function buildDocumentHtml({ type, number, company, customer, job, device
     </article>`;
 }
 
+function safeFilename(payload) {
+  const fallback = `${payload.type || "document"}-${payload.number || Date.now()}`;
+  return `${fallback}`.replace(/[^a-z0-9._-]+/gi, "-").replace(/-+/g, "-") + ".pdf";
+}
+
+async function waitForImages(root) {
+  const images = [...root.querySelectorAll("img")];
+  await Promise.all(images.map(img => {
+    if (img.complete) return Promise.resolve();
+    return new Promise(resolve => {
+      img.addEventListener("load", resolve, { once: true });
+      img.addEventListener("error", resolve, { once: true });
+    });
+  }));
+}
+
+async function createPdfBlob(element, payload) {
+  if (typeof window.html2pdf !== "function") {
+    throw new Error("PDF engine is unavailable. Check your internet connection and try again.");
+  }
+  await waitForImages(element);
+  const options = {
+    margin: [8, 8, 8, 8],
+    filename: safeFilename(payload),
+    image: { type: "jpeg", quality: 0.98 },
+    html2canvas: { scale: 2, useCORS: true, backgroundColor: "#ffffff" },
+    jsPDF: { unit: "mm", format: "a4", orientation: "portrait" },
+    pagebreak: { mode: ["css", "legacy"] }
+  };
+  const worker = window.html2pdf().set(options).from(element).toPdf();
+  return worker.get("pdf").then(pdf => pdf.output("blob"));
+}
+
+function downloadBlob(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 3000);
+}
+
 export function openPrintableDocument(payload) {
   const host = document.getElementById("documentHost");
   host.innerHTML = `
     <div class="document-overlay">
       <div class="document-actions no-print">
         <button class="button secondary" data-doc-close>${icon("close", 18)} Close</button>
-        <button class="button secondary" data-doc-share>${icon("link", 18)} Share</button><button class="button primary" data-doc-print>${icon("download", 18)} Print / Save PDF</button>
+        <button class="button secondary" data-doc-print>Print</button>
+        <button class="button secondary" data-doc-download>${icon("download", 18)} Download PDF</button>
+        <button class="button primary" data-doc-share>${icon("link", 18)} Share PDF</button>
       </div>
       ${buildDocumentHtml(payload)}
     </div>`;
 
+  const documentElement = host.querySelector(".generated-document");
+  const filename = safeFilename(payload);
+
   host.querySelector("[data-doc-close]").onclick = () => host.replaceChildren();
   host.querySelector("[data-doc-print]").onclick = () => window.print();
-  host.querySelector("[data-doc-share]").onclick = async () => {
-    const title = `${payload.type || "RecoveryDesk document"} ${payload.number || ""}`.trim();
-    if (navigator.share) {
-      try {
-        await navigator.share({ title, text: `${title} · WISCODE INNOVATIONS LTD` });
-      } catch {}
-    } else {
-      alert("Use Print / Save PDF, then share the saved PDF from your device.");
+  host.querySelector("[data-doc-download]").onclick = async event => {
+    const button = event.currentTarget;
+    const original = button.innerHTML;
+    button.disabled = true;
+    button.textContent = "Preparing PDF…";
+    try {
+      const blob = await createPdfBlob(documentElement, payload);
+      downloadBlob(blob, filename);
+    } catch (error) {
+      alert(error?.message || "PDF could not be generated.");
+    } finally {
+      button.disabled = false;
+      button.innerHTML = original;
+    }
+  };
+
+  host.querySelector("[data-doc-share]").onclick = async event => {
+    const button = event.currentTarget;
+    const original = button.innerHTML;
+    button.disabled = true;
+    button.textContent = "Preparing PDF…";
+    try {
+      const blob = await createPdfBlob(documentElement, payload);
+      const file = new File([blob], filename, { type: "application/pdf" });
+      const title = `${payload.type || "RecoveryDesk document"} ${payload.number || ""}`.trim();
+      if (navigator.share && navigator.canShare?.({ files: [file] })) {
+        await navigator.share({ title, text: `${title} · WISCODE INNOVATIONS LTD`, files: [file] });
+      } else {
+        downloadBlob(blob, filename);
+        alert("Direct file sharing is not supported by this browser. The PDF has been downloaded so you can share it from your device.");
+      }
+    } catch (error) {
+      if (error?.name !== "AbortError") alert(error?.message || "The PDF could not be shared.");
+    } finally {
+      button.disabled = false;
+      button.innerHTML = original;
     }
   };
 }

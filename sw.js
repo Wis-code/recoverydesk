@@ -1,9 +1,11 @@
-const CACHE = "recoverydesk-v2-4-5-shell-1";
+const CACHE = "recoverydesk-v2-5-pricing-invoice-2";
 const SHELL = [
   "./",
   "./index.html",
   "./styles.css",
   "./app.js",
+  "./pricing-engine.js",
+  "./invoice-checkout.js",
   "./firebase.js",
   "./icons.js",
   "./documents.js",
@@ -31,7 +33,6 @@ self.addEventListener("fetch", event => {
   if (event.request.method !== "GET") return;
   const url = new URL(event.request.url);
 
-  // Do not cache Firebase/Google API traffic.
   if (url.origin !== location.origin) return;
 
   if (event.request.mode === "navigate") {
