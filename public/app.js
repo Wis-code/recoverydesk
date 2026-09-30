@@ -11,7 +11,7 @@ import {
 import { icon } from "./icons.js";
 import { formatMoney, formatDate, openPrintableDocument } from "./documents.js";
 import { mountNotifications, disconnectNotifications, loadDeliveryStatus } from "./notifications.js";
-import { buildFollowups, customerMessage, whatsappNumber } from "./reminders.js";
+import { buildFollowups, customerMessage, whatsappNumber, emailReminderLink } from "./reminders.js";
 
 const DEFAULT_COMPANY = {
   name: "WISCODE INNOVATIONS LTD",
@@ -1270,7 +1270,8 @@ function renderFollowups(host) {
     const customer = jobCustomer(item.job);
     const text = customerMessage(item, customer, company().name);
     const phone = whatsappNumber(customer?.phone);
-    return `<section class="panel"><div class="panel-head"><div><h2>${esc(item.title)}</h2><p>${esc(item.job.jobId || item.job.key)} · ${esc(customer?.fullName || 'Client')}${item.kind === 'collection' ? ` · ${item.days === null ? 'Ready date unknown' : `${item.days} days waiting`}` : ''}</p></div>${item.overdue ? '<span class="status-pill tone-warning">Overdue</span>' : ''}</div><p>${esc(text)}</p><div class="head-actions"><button class="secondary" data-open-followup="${index}">Open case</button>${phone ? `<a class="button secondary" target="_blank" rel="noopener noreferrer" href="https://wa.me/${encodeURIComponent(phone)}?text=${encodeURIComponent(text)}">Review in WhatsApp</a><a class="button secondary" href="tel:${esc(normalizePhone(customer.phone))}">Call</a>` : '<span class="muted">No customer phone</span>'}<button class="primary" data-contacted="${index}">Mark contacted</button></div></section>`;
+    const emailLink = emailReminderLink(customer?.email, `${company().name} · ${item.job.jobId || item.job.key} · ${item.kind === "received" ? "Device received" : item.kind === "scheduled" ? "Case reminder" : "Ready for collection"}`, text);
+    return `<section class="panel"><div class="panel-head"><div><h2>${esc(item.title)}</h2><p>${esc(item.job.jobId || item.job.key)} · ${esc(customer?.fullName || 'Client')}${item.kind === 'collection' ? ` · ${item.days === null ? 'Ready date unknown' : `${item.days} days waiting`}` : ''}</p></div>${item.overdue ? '<span class="status-pill tone-warning">Overdue</span>' : ''}</div><p>${esc(text)}</p><div class="head-actions"><button class="secondary" data-open-followup="${index}">Open case</button>${phone ? `<a class="button secondary" target="_blank" rel="noopener noreferrer" href="https://wa.me/${encodeURIComponent(phone)}?text=${encodeURIComponent(text)}">Review in WhatsApp</a><a class="button secondary" href="tel:${esc(normalizePhone(customer.phone))}">Call</a>` : '<span class="muted">No customer phone</span>'}${emailLink ? `<a class="button secondary" href="${esc(emailLink)}">Review in Email</a>` : `<span class="tiny muted">No client email saved</span>`}<button class="primary" data-contacted="${index}">Mark contacted</button></div></section>`;
   }).join('') : '<section class="panel"><h2>All caught up</h2><p>No device acknowledgements or collection follow-ups waiting.</p></section>'}`;
   host.querySelectorAll('[data-open-followup]').forEach(button => button.onclick = () => navigate('job-detail', {jobKey: items[Number(button.dataset.openFollowup)].job.key}));
   host.querySelectorAll('[data-contacted]').forEach(button => button.onclick = async () => {
@@ -1279,7 +1280,7 @@ function renderFollowups(host) {
     const reason = await managementReasonModal({title:'Confirm customer contacted',subtitle:item.job.jobId || item.job.key,warning:'Only mark this after you have actually contacted the customer.',label:'Contact method / note *',confirmText:'Save contact'});
     if (!reason) return;
     try {
-      await set(push(ref(db, `communications/${item.job.customerId}`)), {type:item.kind === 'received' ? 'Device received notice' : 'Collection reminder',jobKey:item.job.key,jobId:item.job.jobId || item.job.key,note:reason,createdAt:now(),createdBy:state.user.uid,createdByName:profileDisplay()});
+      await set(push(ref(db, `communications/${item.job.customerId}`)), {type:item.kind === 'received' ? 'Device received notice' : item.kind === 'scheduled' ? 'Scheduled reminder' : 'Collection reminder',jobKey:item.job.key,jobId:item.job.jobId || item.job.key,note:reason,createdAt:now(),createdBy:state.user.uid,createdByName:profileDisplay()});
       toast('Contact recorded.', 'success'); renderCurrentView();
     } catch(error) { console.error(error); toast('Contact could not be saved.', 'error'); }
   });
@@ -2241,7 +2242,7 @@ function startIntake(preselectedCustomerId = "") {
 }
 
 function intakeNotificationFields(d) {
-  return `<label class="field"><span>Send intake sheet</span><select data-intake-field="notificationChannel">${[["auto","Email, or WhatsApp with consent"],["email","Email"],["whatsapp","WhatsApp"],["none","Do not send"]].map(([v,t])=>`<option value="${v}" ${d.notificationChannel===v?"selected":""}>${t}</option>`).join("")}</select></label><label><input type="checkbox" data-intake-field="whatsappConsent" ${d.whatsappConsent?"checked":""}> Client agrees to WhatsApp intake and collection updates</label><p class="tiny muted">Automatic delivery requires a connected sending account. Email needs a client email address.</p>`;
+  return `<label class="field"><span>Send intake sheet</span><select data-intake-field="notificationChannel">${[["auto","Email, or WhatsApp with consent"],["email","Email"],["whatsapp","WhatsApp"],["none","Manual WhatsApp / email"]].map(([v,t])=>`<option value="${v}" ${d.notificationChannel===v?"selected":""}>${t}</option>`).join("")}</select></label><label><input type="checkbox" data-intake-field="whatsappConsent" ${d.whatsappConsent?"checked":""}> Client agrees to WhatsApp intake and collection updates</label><p class="tiny muted">Manual messages are prepared in Follow-ups. Automatic delivery requires a connected sending account.</p>`;
 }
 
 function createIntakeDraft(customerId = "") {
@@ -2250,7 +2251,7 @@ function createIntakeDraft(customerId = "") {
     step: 0,
     customerId,
     newCustomer: { fullName: "", phone: "", email: "", address: "" },
-    notificationChannel: "auto", whatsappConsent: false,
+    notificationChannel: "none", whatsappConsent: false,
     ownerName: "",
     submitterName: "",
     submitterRelationship: "",
@@ -3099,6 +3100,21 @@ function renderJobDetail(host) {
     loadDeliveryStatus(document.getElementById('deliveryStatus'),job.key);
   });
   header.querySelector('#roomPhoto')?.addEventListener('click',()=>openAttachmentModal(job));
+  if(room==='overview' && canControlJob(job)) {
+    const panel=document.createElement('section');panel.className='panel form-section';
+    const date=job.followupAt ? new Date(Number(job.followupAt)) : null;
+    const local=date ? new Date(date.getTime()-date.getTimezoneOffset()*60000).toISOString().slice(0,16) : '';
+    panel.innerHTML=`<h2>Client reminder</h2><label class="field"><span>Date and time (this device's timezone)</span><input id="caseFollowupAt" type="datetime-local" value="${esc(local)}"></label><label class="field"><span>Message (optional)</span><textarea id="caseFollowupMessage" maxlength="1000" placeholder="What should the client be reminded about?">${esc(job.followupMessage || '')}</textarea></label><div class="head-actions"><button class="primary" id="saveCaseFollowup">Save reminder</button><button class="ghost" id="clearCaseFollowup">Clear reminder</button></div><p class="tiny muted">Appears in Follow-ups when due. Review the prepared WhatsApp or email message, send it, then mark contacted.</p>`;
+    host.append(panel);
+    const save=async clear=>{
+      const value=panel.querySelector('#caseFollowupAt').value;
+      const at=clear ? null : new Date(value).getTime();
+      if(!clear && (!value || !Number.isFinite(at)))return toast('Choose a reminder date and time.','error');
+      try {await update(ref(db,`jobs/${job.key}`),{followupAt:at,followupMessage:clear ? '' : panel.querySelector('#caseFollowupMessage').value.trim(),followupSetBy:state.user.uid,updatedAt:now()});toast(clear?'Reminder cleared.':'Reminder saved.','success');}catch {toast('Reminder could not be saved.','error');}
+    };
+    panel.querySelector('#saveCaseFollowup').onclick=()=>save(false);
+    panel.querySelector('#clearCaseFollowup').onclick=()=>save(true);
+  }
   if(room==='overview') {
     const photos=values(state.data.attachments?.[job.key]||{}).filter(a=>a.contentType?.startsWith('image/')).slice(0,3);
     if(photos.length) {
