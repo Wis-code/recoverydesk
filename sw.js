@@ -1,4 +1,4 @@
-const CACHE = "recoverydesk-mobile-preview-4";
+const CACHE = "recoverydesk-mobile-preview-5";
 const SHELL = [
   "./",
   "./index.html",
@@ -16,7 +16,7 @@ const SHELL = [
 ];
 
 self.addEventListener("install", event => {
-  event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(SHELL)));
+  event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(SHELL.map(path => new Request(path, { cache: "reload" })))));
   self.skipWaiting();
 });
 
