@@ -4957,7 +4957,6 @@ function openStaffEditModal(profile) {
   const body = `
     <form id="staffEditForm">
       <div class="form-grid">
-        <label class="button secondary">${icon("camera",17)} Change profile picture<input class="file-input-hidden" type="file" id="profilePhotoInput" accept="image/*"></label>
         <label class="field"><span>Real name</span><input name="realName" value="${esc(profile.realName || profile.name || "")}" required></label>
         <label class="field"><span>Display name</span><input name="displayName" value="${esc(profile.displayName || profile.realName || profile.name || "")}" required></label>
         <label class="field"><span>Job title</span><input name="jobTitle" value="${esc(profile.jobTitle || "")}"></label>
@@ -5162,6 +5161,7 @@ function renderSettings(host) {
           ${avatarMarkup(profileDisplay(), state.staff)}
         </div>
 
+        <label class="button secondary">${icon("camera",17)} Change profile picture<input class="file-input-hidden" type="file" id="profilePhotoInput" accept="image/*"></label>
         <label class="field"><span>Real name</span><input value="${esc(profileRealName())}" readonly></label>
         <label class="field"><span>Display name</span><input id="profileDisplayName" value="${esc(profileDisplay())}"></label>
         <label class="field"><span>Job title</span><input value="${esc(state.staff.jobTitle || roleLabel())}" readonly></label>
