@@ -44,3 +44,8 @@ function collectionDue(job, history, time) {
 }
 function retryDelay(attempt) { return Math.min(60*60*1000, 60000 * 2 ** Math.min(attempt,6)); }
 module.exports = {DAY,id,archived,phone,channel,validSubscription,staffRecipients,clientRecipients,collectionDue,retryDelay};
+
+function workDue(job,time) {
+  return !archived(job) && !!job.assignedTo && !['Ready for Collection','Completed','Closed','Cancelled'].includes(job.status) && Number(job.workDueAt)>0 && Number(job.workDueAt)<time;
+}
+module.exports.workDue=workDue;

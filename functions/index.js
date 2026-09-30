@@ -8,7 +8,7 @@ const {onSchedule} = require('firebase-functions/v2/scheduler');
 const {setGlobalOptions} = require('firebase-functions/v2');
 const {defineSecret} = require('firebase-functions/params');
 const webpush = require('web-push');
-const {id,archived,channel,validSubscription,staffRecipients,clientRecipients,collectionDue,retryDelay,DAY} = require('./core');
+const {id,archived,channel,validSubscription,staffRecipients,clientRecipients,collectionDue,retryDelay,DAY,workDue} = require('./core');
 const {intakePdf} = require('./intake-pdf');
 
 initializeApp({databaseURL:'https://wiscodery-forensic-default-rtdb.europe-west1.firebasedatabase.app'});
@@ -37,6 +37,18 @@ async function canReceive(uid,event) {
   try {
     const who = await identity(uid);
     if(!event.jobKey && event.kind === 'test')return true;
+    if(event.kind==='job-overdue') {
+      const job=await read(`jobs/${event.jobKey}`);
+      return !!who.staff && job?.assignedTo===uid && workDue(job,Date.now()) && Number(job.workDueAt)===Number(event.workDueAt);
+    }
+    if(event.postKey) {
+      const post=await read(`jobPosts/${event.postKey}`);
+      if(!who.staff || !post || post.status!=='claimed' || post.claimedBy!==uid || archived(post))return false;
+      const due=Number(post.deadlineMs) || new Date(post.deadlineAt).getTime();
+      if(!(due<Date.now()))return false;
+      if(post.relatedJobKey)return false; // Linked jobs use their editable case deadline.
+      return true;
+    }
     if(event.taskKey) {
       const task = await read(`tasks/${event.taskKey}`);
       return !!who.staff && !!task && !task.archived && !task.archivedAt && task.status !== 'completed' && (task.assignedTo === uid || ['owner','admin','subadmin'].includes(who.staff.role));
@@ -168,7 +180,7 @@ async function sendPush(event,c) {
   if(!await canReceive(event.uid,event))return {status:'cancelled'};
   if(!c.vapid?.publicKey || !c.vapid?.privateKey)return {status:'blocked',reason:'Push setup is incomplete',dueAt:Date.now()+60*60*1000};
   const docs=await subs(event.uid).get();if(docs.empty)return {status:'skipped',reason:'No device has enabled notifications'};
-  const bodies={intake:'A device intake has been recorded. Open RecoveryDesk for details.',collection:'A device is ready for collection. Open RecoveryDesk for details.',update:'A recovery case has an update. Open RecoveryDesk for details.',task:'A task needs your attention. Open RecoveryDesk for details.',test:'Background notifications are working.'};
+  const bodies={'job-overdue':'Your assigned job is overdue. Open RecoveryDesk to update its progress or completion date.','board-overdue':'Work you claimed is overdue. Open the Job Board to review it.',intake:'A device intake has been recorded. Open RecoveryDesk for details.',collection:'A device is ready for collection. Open RecoveryDesk for details.',update:'A recovery case has an update. Open RecoveryDesk for details.',task:'A task needs your attention. Open RecoveryDesk for details.',test:'Background notifications are working.'};
   const results=await Promise.all(docs.docs.map(async d=>{
     const s=d.data();if(!validSubscription(s)){await d.ref.delete();return true;}
     try {await webpush.sendNotification(s,JSON.stringify({title:'RecoveryDesk',body:bodies[event.kind] || bodies.update,tag:event.deliveryId,url:'./'}),{vapidDetails:{subject:c.vapid.subject || 'https://wiscodery-forensic.web.app',publicKey:c.vapid.publicKey,privateKey:c.vapid.privateKey},timeout:15000,TTL:86400,topic:event.deliveryId.slice(0,32)});return true;}
@@ -210,11 +222,16 @@ exports.deliverNotifications = onSchedule({...options,schedule:'every 1 minutes'
   }
 });
 exports.dailyRecoveryReminders = onSchedule({schedule:'0 9 * * *',timeZone:'Africa/Lagos'},async()=>{
-  const [jobs,tasks,history,users]=await Promise.all([read('jobs'),read('tasks'),read('communications'),read('users')]);
+  const [jobs,tasks,history,users,posts]=await Promise.all([read('jobs'),read('tasks'),read('communications'),read('users'),read('jobPosts')]);
   const time=Date.now(),date=new Date(time).toLocaleDateString('en-CA',{timeZone:'Africa/Lagos'});
   for(const [jobKey,record] of Object.entries(jobs || {})) {
     const job={...record,key:jobKey};
+    if(workDue(job,time) && users?.[job.assignedTo]?.active!==false && users?.[job.assignedTo]?.role)await pushEvents(`job-overdue:${jobKey}:${job.workDueAt}:${job.assignedTo}:${date}`,[job.assignedTo],{kind:'job-overdue',jobKey,workDueAt:job.workDueAt});
     if(collectionDue(job,history?.[job.customerId],time))await jobEvents(job,jobKey,'collection',`collection-week:${jobKey}:${Math.floor(time/(7*DAY))}`);
+  }
+  for(const [postKey,post] of Object.entries(posts || {})) {
+    const due=Number(post.deadlineMs) || new Date(post.deadlineAt).getTime();
+    if(!archived(post) && post.status==='claimed' && !post.relatedJobKey && post.claimedBy && due<time && users?.[post.claimedBy]?.role && users[post.claimedBy].active!==false)await pushEvents(`board-overdue:${postKey}:${due}:${post.claimedBy}:${date}`,[post.claimedBy],{kind:'board-overdue',postKey});
   }
   for(const [taskKey,task] of Object.entries(tasks || {})) {
     if(task.archivedAt || task.archived || task.status==='completed' || !/^\d{4}-\d{2}-\d{2}$/.test(task.dueAt || '') || task.dueAt>date)continue;

@@ -31,3 +31,10 @@ test('intake sheet is a PDF and tolerates missing optional client data',async()=
  const pdf=await intakePdf({job:{jobId:'CASE-001',createdAt:Date.now()},customer:{phone:'08012345678'},company:{name:'WISCODE'},devices:[{type:'HDD',brandModel:'Test',capacity:'1TB'}]});
  assert.equal(pdf.subarray(0,5).toString(),'%PDF-');assert.ok(pdf.length>1000);
 });
+
+test('assigned job deadlines stop after ready, completed, archived or unassigned',()=>{
+ const {workDue}=require('../core');const job={assignedTo:'worker',workDueAt:200,status:'Assessment'};
+ assert.equal(workDue(job,199),false);assert.equal(workDue(job,201),true);
+ for(const status of ['Ready for Collection','Completed','Closed','Cancelled'])assert.equal(workDue({...job,status},201),false);
+ for(const change of [{archived:true},{testRecord:true},{assignedTo:''},{workDueAt:null}])assert.equal(workDue({...job,...change},201),false);
+});

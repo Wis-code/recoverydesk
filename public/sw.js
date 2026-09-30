@@ -1,4 +1,4 @@
-const CACHE = "recoverydesk-mobile-preview-11";
+const CACHE = "recoverydesk-mobile-preview-12";
 const SHELL = [
   "./",
   "./index.html",

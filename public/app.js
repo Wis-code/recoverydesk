@@ -3100,6 +3100,24 @@ function renderJobDetail(host) {
     loadDeliveryStatus(document.getElementById('deliveryStatus'),job.key);
   });
   header.querySelector('#roomPhoto')?.addEventListener('click',()=>openAttachmentModal(job));
+  if(room==='overview') {
+    const section=document.createElement('section');section.className='panel form-section';
+    const date=Number(job.workDueAt)>0 ? new Date(Number(job.workDueAt)) : null;
+    const local=date ? new Date(date.getTime()-date.getTimezoneOffset()*60000).toISOString().slice(0,16) : '';
+    const overdue=date && date.getTime()<now() && !['Ready for Collection','Completed','Closed','Cancelled'].includes(job.status);
+    section.innerHTML=`<h2>Work deadline ${overdue?'<span class="status-pill tone-warning">Overdue</span>':''}</h2><p>${esc(job.assignedToName || 'No worker assigned')}${date?' · '+esc(formatDate(date.getTime(),true)):''}</p>${canControlJob(job)?`<label class="field"><span>Expected completion (this device's timezone)</span><input type="datetime-local" id="workDeadline" value="${esc(local)}"></label><div class="head-actions"><button class="primary" id="saveWorkDeadline">Save deadline</button><button class="ghost" id="clearWorkDeadline">Clear deadline</button></div><p class="tiny muted">The assigned worker receives a daily overdue alert at 9 a.m. Nigerian time until the device is ready or the case is closed.</p>`:''}`;
+    host.append(section);
+    if(canControlJob(job)) {
+      const save=async clear=>{
+        const value=section.querySelector('#workDeadline').value;
+        const at=clear?null:new Date(value).getTime();
+        if(!clear && (!value || !Number.isFinite(at)))return toast('Choose a completion date.','error');
+        try {await update(ref(db,`jobs/${job.key}`),{workDueAt:at,workDueSetBy:state.user.uid,updatedAt:now()});toast(clear?'Deadline cleared.':'Deadline saved.','success');}catch {toast('Deadline could not be saved.','error');}
+      };
+      section.querySelector('#saveWorkDeadline').onclick=()=>save(false);
+      section.querySelector('#clearWorkDeadline').onclick=()=>save(true);
+    }
+  }
   if(room==='overview' && canControlJob(job)) {
     const panel=document.createElement('section');panel.className='panel form-section';
     const date=job.followupAt ? new Date(Number(job.followupAt)) : null;
@@ -4339,7 +4357,7 @@ async function claimJobPost(postKey) {
         if(job.assignedTo && job.assignedTo !== state.user.uid){
           toast("The board post was claimed, but the linked job is already assigned. Ask Admin to resolve it.","error");
         }else{
-          await update(ref(db,`jobs/${post.relatedJobKey}`),{assignedTo:state.user.uid,assignedToName:profileDisplay(),assignedAt:now(),assignedBy:state.user.uid,claimPostId:postKey,updatedAt:now()});
+          await update(ref(db,`jobs/${post.relatedJobKey}`),{assignedTo:state.user.uid,assignedToName:profileDisplay(),assignedAt:now(),assignedBy:state.user.uid,claimPostId:postKey,workDueAt:Number(job.workDueAt) || safeNumber(post.deadlineMs) || new Date(post.deadlineAt).getTime() || null,updatedAt:now()});
         }
       }
     }
