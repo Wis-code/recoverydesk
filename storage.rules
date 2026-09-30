@@ -31,6 +31,7 @@ service firebase.storage {
     function isClientFor(customerId) {
       return signedIn() &&
         firestore.exists(/databases/(default)/documents/customerAccess/$(request.auth.uid)) &&
+        firestore.get(/databases/(default)/documents/customerAccess/$(request.auth.uid)).data.active == true &&
         firestore.get(/databases/(default)/documents/customerAccess/$(request.auth.uid)).data.customerId == customerId;
     }
 
