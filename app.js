@@ -4476,6 +4476,7 @@ function openTaskModal(job = null, existingTask = null) {
     try {
       await remove(ref(db, `tasks/${existingTask.key}`));
       await recordAudit("deleted", "task", existingTask.key, reason);
+      closeModal();
       toast("Task deleted.", "success");
     } catch (error) {
       console.error(error);
@@ -5351,9 +5352,14 @@ function renderSettings(host) {
       const target = storageRef(storage, `profiles/${state.user.uid}/upload-check.jpg`);
       await uploadTask(uploadBytesResumable(target,blob,{contentType:'image/jpeg'}));
       const url = await getDownloadURL(target);
-      const response = await fetch(url);
-      if (!response.ok || !(await response.blob()).size) throw new Error('Uploaded image could not be read');
-      status.textContent = 'Photo upload and download verified. Your profile picture was not changed.';
+      await new Promise((resolve,reject) => {
+        const image = new Image();
+        const timeout = setTimeout(() => reject(new Error('Image display timed out')),15000);
+        image.onload = () => {clearTimeout(timeout); image.naturalWidth ? resolve() : reject(new Error('Image is empty'));};
+        image.onerror = () => {clearTimeout(timeout); reject(new Error('Uploaded image could not be displayed'));};
+        image.src = url;
+      });
+      status.textContent = 'Photo upload and display verified. Your profile picture was not changed.';
     } catch(error) { status.textContent = `Photo check failed: ${error.code || error.message}`; }
     finally { setBusy(button,false); }
   };
