@@ -1,4 +1,4 @@
 .firebase/
 
-# Temporary Google deployment credentials
+functions/node_modules/
 gha-creds-*.json

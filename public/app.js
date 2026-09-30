@@ -10,6 +10,7 @@ import {
 
 import { icon } from "./icons.js";
 import { formatMoney, formatDate, openPrintableDocument } from "./documents.js";
+import { mountNotifications, disconnectNotifications, loadDeliveryStatus } from "./notifications.js";
 import { buildFollowups, customerMessage, whatsappNumber } from "./reminders.js";
 
 const DEFAULT_COMPANY = {
@@ -1002,7 +1003,7 @@ function renderAccessRequest() {
 
   if (pending) {
     document.getElementById("refreshAccess").onclick = resolveIdentity;
-    document.getElementById("signOutPending").onclick = () => signOut(auth);
+    document.getElementById("signOutPending").onclick = () => disconnectNotifications().finally(() => signOut(auth));
     return;
   }
 
@@ -1013,7 +1014,7 @@ function renderAccessRequest() {
     };
   });
 
-  document.getElementById("signOutRequest").onclick = () => signOut(auth);
+  document.getElementById("signOutRequest").onclick = () => disconnectNotifications().finally(() => signOut(auth));
   if (state.requestMode === "staff") bindStaffRequestForm();
   else bindCustomerRequestForm();
 }
@@ -1429,7 +1430,7 @@ function bindShellEvents() {
     button.onclick = () => startIntake();
   });
 
-  document.getElementById("sidebarSignOut")?.addEventListener("click", () => signOut(auth));
+  document.getElementById("sidebarSignOut")?.addEventListener("click", () => disconnectNotifications().finally(() => signOut(auth)));
   document.getElementById("mobileMenuBtn")?.addEventListener("click", openMobileMenu);
 }
 
@@ -1448,7 +1449,7 @@ function openMobileMenu() {
     };
   });
 
-  document.getElementById("mobileSignOut").onclick = () => signOut(auth);
+  document.getElementById("mobileSignOut").onclick = () => disconnectNotifications().finally(() => signOut(auth));
 }
 
 function renderCurrentView() {
@@ -2238,12 +2239,17 @@ function startIntake(preselectedCustomerId = "") {
   navigate("new-intake");
 }
 
+function intakeNotificationFields(d) {
+  return `<label class="field"><span>Send intake sheet</span><select data-intake-field="notificationChannel">${[["auto","Email, or WhatsApp with consent"],["email","Email"],["whatsapp","WhatsApp"],["none","Do not send"]].map(([v,t])=>`<option value="${v}" ${d.notificationChannel===v?"selected":""}>${t}</option>`).join("")}</select></label><label><input type="checkbox" data-intake-field="whatsappConsent" ${d.whatsappConsent?"checked":""}> Client agrees to WhatsApp intake and collection updates</label><p class="tiny muted">Automatic delivery requires a connected sending account. Email needs a client email address.</p>`;
+}
+
 function createIntakeDraft(customerId = "") {
   return {
     customerMode: customerId ? "existing" : "new",
     step: 0,
     customerId,
     newCustomer: { fullName: "", phone: "", email: "", address: "" },
+    notificationChannel: "auto", whatsappConsent: false,
     ownerName: "",
     submitterName: "",
     submitterRelationship: "",
@@ -2364,13 +2370,13 @@ function renderNewIntake(host) {
   if (step===0) body=chips(types,"type");
   if (step===1) body=chips(["32GB","64GB","128GB","256GB","500GB","1TB","2TB"],"capacity") + `<label class="field"><span>Other capacity</span><input id="customCapacity" value="${esc(device.capacity)}" placeholder="e.g. 50GB or Unknown"></label>`;
   if (step===2) body=`<div class="choice-grid">${symptoms.map(x=>`<button class="choice ${selected.includes(x)?"selected":""}" data-symptom="${esc(x)}" aria-pressed="${selected.includes(x)}">${esc(x)}</button>`).join("")}</div><label class="field"><span>Anything else? (optional)</span><input id="symptomNote" value="${esc(device.symptomNote||"")}"></label>`;
-  if (step===3) body=`<div class="segmented"><button data-owner-mode="new" class="${d.customerMode==='new'?'active':''}">New client</button><button data-owner-mode="existing" class="${d.customerMode==='existing'?'active':''}">Returning client</button></div>${d.customerMode==='existing'?`<label class="field"><span>Client</span><select id="quickCustomer"><option value="">Choose client</option>${values(state.data.customers).filter(activeRecord).map(c=>`<option value="${esc(c.key)}" ${d.customerId===c.key?'selected':''}>${esc(c.fullName)} · ${esc(c.phone)}</option>`).join("")}</select></label>`:`${intakeField("Phone number","newCustomer.phone",d.newCustomer.phone,"tel")}${intakeField("Name (optional)","newCustomer.fullName",d.newCustomer.fullName)}`}<div class="photo-strip">${device.files.map((f,i)=>`<div><img src="${localPhotoUrl(f)}" alt="Device photo ${i+1}"><button class="ghost" data-remove-photo="${i}" aria-label="Remove photo ${i+1}">Remove</button></div>`).join("")}</div><label class="button secondary">${icon("camera",18)} Take photo<input type="file" class="file-input-hidden" accept="image/*" capture="environment" id="quickCamera"></label> <label class="button secondary">Add photos<input type="file" class="file-input-hidden" accept="image/*" multiple id="quickPhotos"></label>`;
+  if (step===3) body=`<div class="segmented"><button data-owner-mode="new" class="${d.customerMode==='new'?'active':''}">New client</button><button data-owner-mode="existing" class="${d.customerMode==='existing'?'active':''}">Returning client</button></div>${d.customerMode==='existing'?`<label class="field"><span>Client</span><select id="quickCustomer"><option value="">Choose client</option>${values(state.data.customers).filter(activeRecord).map(c=>`<option value="${esc(c.key)}" ${d.customerId===c.key?'selected':''}>${esc(c.fullName)} · ${esc(c.phone)}</option>`).join("")}</select></label>`:`${intakeField("Phone number","newCustomer.phone",d.newCustomer.phone,"tel")}${intakeField("Name (optional)","newCustomer.fullName",d.newCustomer.fullName)}${intakeField("Email (for intake sheet)","newCustomer.email",d.newCustomer.email,"email")}`} ${intakeNotificationFields(d)}<div class="photo-strip">${device.files.map((f,i)=>`<div><img src="${localPhotoUrl(f)}" alt="Device photo ${i+1}"><button class="ghost" data-remove-photo="${i}" aria-label="Remove photo ${i+1}">Remove</button></div>`).join("")}</div><label class="button secondary">${icon("camera",18)} Take photo<input type="file" class="file-input-hidden" accept="image/*" capture="environment" id="quickCamera"></label> <label class="button secondary">Add photos<input type="file" class="file-input-hidden" accept="image/*" multiple id="quickPhotos"></label>`;
   host.innerHTML=`<div class="intake-screen"><button class="ghost" id="quickBack">${icon("back",16)} ${step?'Back':'Cases'}</button><span class="eyebrow">${step+1} of 4</span><div class="step-track">${titles.map((_,i)=>`<span class="${i<=step?'filled':''}"></span>`).join("")}</div><h1>${titles[step]}</h1>${body}<button class="primary full" id="quickNext">${step===3?'Create case':'Continue'}</button><button class="ghost full" id="detailedIntake">More devices / detailed intake</button></div>`;
   host.querySelectorAll('[data-choice]').forEach(b=>b.onclick=()=>{device[b.dataset.field]=b.dataset.choice;renderCurrentView();});
   host.querySelectorAll('[data-symptom]').forEach(b=>b.onclick=()=>{const x=b.dataset.symptom;device.symptoms=selected.includes(x)?selected.filter(y=>y!==x):[...selected,x];renderCurrentView();});
   host.querySelector('#customCapacity')?.addEventListener('input',e=>device.capacity=e.target.value);
   host.querySelector('#symptomNote')?.addEventListener('input',e=>device.symptomNote=e.target.value);
-  host.querySelectorAll('[data-intake-field]').forEach(el=>el.oninput=()=>setNested(d,el.dataset.intakeField,el.value));
+  host.querySelectorAll('[data-intake-field]').forEach(el=>el.oninput=()=>setNested(d,el.dataset.intakeField,el.type === "checkbox" ? el.checked : el.value));
   host.querySelectorAll('[data-owner-mode]').forEach(b=>b.onclick=()=>{d.customerMode=b.dataset.ownerMode;renderCurrentView();});
   host.querySelector('#quickCustomer')?.addEventListener('change',e=>d.customerId=e.target.value);
   ['quickCamera','quickPhotos'].forEach(id=>host.querySelector('#'+id)?.addEventListener('change',e=>{device.files.push(...e.target.files);renderCurrentView();}));
@@ -2435,6 +2441,7 @@ function renderDetailedIntake(host) {
           ${intakeField("Address / area", "newCustomer.address", draft.newCustomer.address)}
         </div>
       `}
+      ${intakeNotificationFields(draft)}
     </section>
 
     <section class="panel form-section">
@@ -2721,6 +2728,8 @@ async function saveIntake() {
     const ready = paymentSatisfied && draft.signatureCollected && photoSatisfiedInitially;
 
     const job = {
+      notificationVersion: 1,
+      notificationPrefs: {requested: draft.notificationChannel !== "none", channel: draft.notificationChannel || "auto", whatsappConsent: !!draft.whatsappConsent, email: customer.email || "", phone: customer.phone || ""},
       jobId,
       customerId,
       customerNameSnapshot: customer.fullName,
@@ -3079,10 +3088,15 @@ function renderJobDetail(host) {
   host.querySelectorAll(':scope > .grid.two').forEach(el=>el.classList.add('room-sections'));
   const customer=jobCustomer(job);
   const header=document.createElement('div');header.className='case-room-header';
-  header.innerHTML=`<button class="ghost" id="roomBack">${icon("back",16)} ${room==='overview'?'Cases':'Overview'}</button><span class="eyebrow">${esc(job.jobId||job.key)}</span><h1>${esc(room==='overview'?jobDisplayName(job):labels[room])}</h1>${room==='overview'?`<p>${esc(jobDeviceSummary(job))}</p>${statusPill(job.status)}<div class="head-actions"><button class="primary" data-room="recovery">Update recovery</button>${canControlJob(job) ? `<button class="secondary" id="roomPhoto">Add photo</button>` : ""}${customer?.phone?`<a class="button secondary" href="tel:${esc(normalizePhone(customer.phone))}">Call</a>`:''}</div><div class="room-list">${Object.entries(labels).filter(([k])=>k!=='overview').map(([k,v])=>`<button class="secondary" data-room="${k}">${v} ${icon("chevron",16)}</button>`).join('')}</div>`:''}`;
+  header.innerHTML=`<button class="ghost" id="roomBack">${icon("back",16)} ${room==='overview'?'Cases':'Overview'}</button><span class="eyebrow">${esc(job.jobId||job.key)}</span><h1>${esc(room==='overview'?jobDisplayName(job):labels[room])}</h1>${room==='overview'?`<p>${esc(jobDeviceSummary(job))}</p>${statusPill(job.status)}<div class="head-actions"><button class="primary" data-room="recovery">Update recovery</button><button class="secondary" id="intakeDeliveryStatus">Intake delivery</button>${canControlJob(job) ? `<button class="secondary" id="roomPhoto">Add photo</button>` : ""}${customer?.phone?`<a class="button secondary" href="tel:${esc(normalizePhone(customer.phone))}">Call</a>`:''}</div><div class="room-list">${Object.entries(labels).filter(([k])=>k!=='overview').map(([k,v])=>`<button class="secondary" data-room="${k}">${v} ${icon("chevron",16)}</button>`).join('')}</div>`:''}`;
   host.prepend(header);
   header.querySelector('#roomBack').onclick=()=>{if(room==='overview')navigate('jobs');else{state.caseRoom='overview';renderCurrentView();}};
   header.querySelectorAll('[data-room]').forEach(b=>b.onclick=()=>{state.caseRoom=b.dataset.room;renderCurrentView();window.scrollTo(0,0);});
+  header.querySelector('#intakeDeliveryStatus')?.addEventListener('click',()=>{
+    openModal({title:'Client delivery',subtitle:job.jobId || job.key,body:'<div id="deliveryStatus" role="status">Checking delivery…</div>',actions:'<button class="secondary" data-modal-cancel>Close</button>'});
+    modalHost.querySelector('[data-modal-cancel]').onclick=closeModal;
+    loadDeliveryStatus(document.getElementById('deliveryStatus'),job.key);
+  });
   header.querySelector('#roomPhoto')?.addEventListener('click',()=>openAttachmentModal(job));
   if(room==='overview') {
     const photos=values(state.data.attachments?.[job.key]||{}).filter(a=>a.contentType?.startsWith('image/')).slice(0,3);
@@ -5207,7 +5221,7 @@ function renderSettings(host) {
     <div class="page-head">
       <div>
         <span class="eyebrow">Preferences & system</span>
-        <h1>Settings</h1>
+        <h1>Settings</h1><button class="secondary" id="openNotifications">Notifications</button>
         <p>Your display identity is separate from the real name kept underneath.</p>
       </div>
     </div>
@@ -5378,6 +5392,7 @@ function renderSettings(host) {
       render();toast('Profile picture updated.','success');
     } catch(error) { toast(`Photo upload failed: ${error.code||'Please retry after Storage rules are deployed.'}`,'error'); }
   };
+  document.getElementById("openNotifications").onclick = openNotificationSettings;
   document.getElementById("saveProfileDisplay").onclick = async () => {
     const name = document.getElementById("profileDisplayName").value.trim();
     if (!name) return;
@@ -5669,7 +5684,7 @@ function renderCustomerPortal() {
         <div class="topbar-right">
           <span class="online-dot ${state.services.online?"":"offline"}" data-online-dot></span>
           <span class="tiny muted" data-online-label>${state.services.online?"Online":"Offline"}</span>
-          <button class="ghost" id="portalSignOut">${icon("logout",17)} Sign out</button>
+          <button class="secondary" id="openNotifications">Notifications</button><button class="ghost" id="portalSignOut">${icon("logout",17)} Sign out</button>
         </div>
       </header>
 
@@ -5736,7 +5751,8 @@ function renderCustomerPortal() {
       </main>
     </div>`;
 
-  document.getElementById("portalSignOut").onclick=()=>signOut(auth);
+  document.getElementById("openNotifications").onclick = openNotificationSettings;
+  document.getElementById("portalSignOut").onclick=()=>disconnectNotifications().finally(() => signOut(auth));
 
   document.querySelectorAll("[data-portal-document]").forEach(button=>{
     button.onclick=()=>{
@@ -5822,4 +5838,10 @@ if ("serviceWorker" in navigator && location.protocol === "https:") {
   window.addEventListener("load", () => {
     navigator.serviceWorker.register("./sw.js").catch(console.warn);
   });
+}
+
+function openNotificationSettings() {
+  openModal({title:"Notifications",subtitle:"This device",body:`<div id="notificationControls"></div>`,actions:`<button class="secondary" data-modal-cancel>Close</button>`});
+  modalHost.querySelector("[data-modal-cancel]").onclick=closeModal;
+  mountNotifications(document.getElementById("notificationControls"));
 }

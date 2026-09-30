@@ -1,4 +1,4 @@
-const CACHE = "recoverydesk-mobile-preview-8";
+const CACHE = "recoverydesk-mobile-preview-9";
 const SHELL = [
   "./",
   "./index.html",
@@ -10,6 +10,7 @@ const SHELL = [
   "./icons.js",
   "./documents.js",
   "./reminders.js",
+  "./notifications.js",
   "./manifest.webmanifest",
   "./logo.png",
   "./icon-192.png",
@@ -52,4 +53,17 @@ self.addEventListener("fetch", event => {
       })
     )
   );
+});
+
+self.addEventListener('push',event=>{
+  let data={};try {data=event.data?.json() || {};}catch {}
+  event.waitUntil(self.registration.showNotification('RecoveryDesk',{body:String(data.body || 'Open RecoveryDesk for an update.').slice(0,180),tag:String(data.tag || 'recoverydesk').slice(0,100),icon:new URL('./icon-192.png',self.registration.scope).href,data:{url:self.registration.scope}}));
+});
+self.addEventListener('notificationclick',event=>{
+  event.notification.close();
+  event.waitUntil(self.clients.matchAll({type:'window',includeUncontrolled:true}).then(async clients=>{
+    const client=clients.find(c=>c.url.startsWith(self.registration.scope));
+    if(client)return client.focus();
+    return self.clients.openWindow(self.registration.scope);
+  }));
 });

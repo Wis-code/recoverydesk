@@ -39,6 +39,19 @@
       }
     ]
   },
+  "functions": [
+    {
+      "source": "functions",
+      "codebase": "notifications",
+      "runtime": "nodejs22",
+      "ignore": [
+        "node_modules",
+        ".git",
+        "test",
+        "*.log"
+      ]
+    }
+  ],
   "storage": {
     "rules": "storage.rules"
   },

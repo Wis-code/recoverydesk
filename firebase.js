@@ -60,7 +60,7 @@ export const firebaseConfig = {
 
 export const BOOTSTRAP_ADMIN_UID = "NkBCSA8109gLUz0lwrlvVU2Q02H3";
 
-const firebaseApp = initializeApp(firebaseConfig);
+export const firebaseApp = initializeApp(firebaseConfig);
 
 export const auth = getAuth(firebaseApp);
 export const db = getDatabase(firebaseApp);
