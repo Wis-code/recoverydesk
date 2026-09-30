@@ -5219,6 +5219,7 @@ function renderSettings(host) {
         </div>
 
         <label class="button secondary">${icon("camera",17)} Change profile picture<input class="file-input-hidden" type="file" id="profilePhotoInput" accept="image/*"></label>
+        <button class="ghost" id="checkPhotoUploads">Check photo uploads</button><span class="tiny muted" id="photoUploadCheck" role="status"></span>
         <label class="field"><span>Real name</span><input value="${esc(profileRealName())}" readonly></label>
         <label class="field"><span>Display name</span><input id="profileDisplayName" value="${esc(profileDisplay())}"></label>
         <label class="field"><span>Job title</span><input value="${esc(state.staff.jobTitle || roleLabel())}" readonly></label>
@@ -5338,6 +5339,24 @@ function renderSettings(host) {
   `;
 
   bindAppearanceShortcuts(host);
+  document.getElementById('checkPhotoUploads').onclick = async () => {
+    const button = document.getElementById('checkPhotoUploads');
+    const status = document.getElementById('photoUploadCheck');
+    setBusy(button, true, 'Checking…');
+    try {
+      const canvas = document.createElement('canvas'); canvas.width = canvas.height = 2;
+      canvas.getContext('2d').fillRect(0,0,2,2);
+      const blob = await new Promise(resolve => canvas.toBlob(resolve,'image/jpeg',0.6));
+      if (!blob) throw new Error('Image encoding failed');
+      const target = storageRef(storage, `profiles/${state.user.uid}/upload-check.jpg`);
+      await uploadTask(uploadBytesResumable(target,blob,{contentType:'image/jpeg'}));
+      const url = await getDownloadURL(target);
+      const response = await fetch(url);
+      if (!response.ok || !(await response.blob()).size) throw new Error('Uploaded image could not be read');
+      status.textContent = 'Photo upload and download verified. Your profile picture was not changed.';
+    } catch(error) { status.textContent = `Photo check failed: ${error.code || error.message}`; }
+    finally { setBusy(button,false); }
+  };
   document.getElementById('profilePhotoInput').onchange = async event => {
     const file=event.target.files?.[0];if(!file)return;
     if(!file.type.startsWith('image/'))return toast('Choose an image.','error');
