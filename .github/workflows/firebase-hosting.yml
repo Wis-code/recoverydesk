@@ -1,0 +1,47 @@
+name: Deploy RecoveryDesk to Firebase
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: recoverydesk-firebase-live
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Check website code
+        run: |
+          node --check public/app.js
+          node --check public/firebase.js
+          node --check public/reminders.js
+          node --check public/pricing-engine.js
+          node --check public/invoice-checkout.js
+          node --check public/sw.js
+      - name: Install Firebase CLI
+        run: npm install --global firebase-tools@latest
+      - name: Authenticate with Google Cloud
+        uses: google-github-actions/auth@v3
+        with:
+          project_id: wiscodery-forensic
+          workload_identity_provider: projects/1032205659317/locations/global/workloadIdentityPools/recoverydesk-github/providers/github
+          service_account: recoverydesk-deploy@wiscodery-forensic.iam.gserviceaccount.com
+      - name: Publish website
+        run: firebase deploy --project wiscodery-forensic --only hosting --non-interactive
+      - name: Explain connection failure
+        if: failure()
+        run: |
+          echo 'Deployment failed. If the Google Cloud connection is not set up yet, run scripts/connect-firebase-github.sh once in Google Cloud Shell, then re-run this workflow.' >> "$GITHUB_STEP_SUMMARY"
+          echo 'This workflow deploys website files only. It does not migrate or delete customer records.' >> "$GITHUB_STEP_SUMMARY"
