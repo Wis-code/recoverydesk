@@ -50,6 +50,7 @@ const state = {
   view: "dashboard",
   selectedCustomerId: null,
   selectedJobKey: null,
+  caseRoom: "overview",
   intakeDraft: null,
   authMode: "signin",
   requestMode: "staff",
@@ -272,7 +273,7 @@ function sub(path, callback, errorCallback) {
 function navigate(view, options = {}) {
   state.view = view;
   if ("customerId" in options) state.selectedCustomerId = options.customerId;
-  if ("jobKey" in options) state.selectedJobKey = options.jobKey;
+  if ("jobKey" in options) { state.selectedJobKey = options.jobKey; state.caseRoom = "overview"; }
   render();
   window.scrollTo({ top: 0, behavior: "instant" });
   setTimeout(() => maybeRunTabTraining(view), 30);
@@ -472,11 +473,11 @@ function pendingLedgerCount() {
 }
 
 function applyTheme() {
-  const preference = localStorage.getItem("rd-theme") || "system";
+  const preference = localStorage.getItem("rd-theme") || "light";
   const media = window.matchMedia("(prefers-color-scheme: dark)");
   const dark = preference === "dark" || (preference === "system" && media.matches);
   document.documentElement.dataset.theme = dark ? "dark" : "light";
-  document.querySelector('meta[name="theme-color"]')?.setAttribute("content", dark ? "#0b0d0c" : "#ffffff");
+  document.querySelector('meta[name="theme-color"]')?.setAttribute("content", dark ? "#101010" : "#ffffff");
 }
 
 applyTheme();
@@ -1231,7 +1232,7 @@ function openMandatoryTraining(view, key, slides) {
   draw();
 }
 
-function navItems() {
+function workspaceItems() {
   const items = [
     ["dashboard", "home", "Dashboard", ""],
     ["customers", "customers", "Customers", pendingCustomerAccessCount() ? String(pendingCustomerAccessCount()) : ""],
@@ -1247,6 +1248,17 @@ function navItems() {
   if (isAdmin()) items.push(["audit", "audit", "Audit", ""]);
   items.push(["settings", "settings", "Settings", ""]);
   return items;
+}
+
+function navItems() {
+  return [["dashboard", "home", "Home", ""], ["jobs", "jobs", "Cases", ""],
+    ...(isOps() ? [["new-intake", "plus", "New case", ""]] : []),
+    ["customers", "customers", "Clients", ""], ["more", "menu", "More", ""]];
+}
+
+function renderMore(host) {
+  host.innerHTML = `<div class="page-head"><h1>More</h1></div><div class="room-list">${workspaceItems().filter(i => !["dashboard", "customers", "jobs"].includes(i[0])).map(i => navButton(i)).join("")}</div>`;
+  host.querySelectorAll("[data-nav]").forEach(b => b.onclick = () => navigate(b.dataset.nav));
 }
 
 function navButton(item, mobile = false) {
@@ -1284,13 +1296,7 @@ function currentViewTitle() {
 
 function renderStaffApp() {
   const items = navItems();
-  const mobileItems = [
-    items.find(item => item[0] === "dashboard"),
-    items.find(item => item[0] === "customers"),
-    items.find(item => item[0] === "jobs"),
-    items.find(item => item[0] === "tasks"),
-    items.find(item => item[0] === (isFinance() ? "finance" : "settings"))
-  ].filter(Boolean);
+  const mobileItems = items;
 
   app.innerHTML = `
     <div class="app-shell">
@@ -1350,6 +1356,7 @@ function bindShellEvents() {
       const view = button.dataset.nav;
       if (view === "customers") state.selectedCustomerId = null;
       if (view === "jobs") state.selectedJobKey = null;
+      if (view === "new-intake") return startIntake();
       navigate(view);
     };
   });
@@ -1383,6 +1390,7 @@ function openMobileMenu() {
 function renderCurrentView() {
   const host = document.getElementById("viewHost");
   if (!host) return;
+  host.className = "content";
 
   if (state.view === "dashboard") return renderDashboard(host);
   if (state.view === "customers") return renderCustomers(host);
@@ -1390,6 +1398,8 @@ function renderCurrentView() {
   if (state.view === "jobs") return renderJobs(host);
   if (state.view === "job-detail") return renderJobDetail(host);
   if (state.view === "new-intake") return renderNewIntake(host);
+  if (state.view === "detailed-intake") return renderDetailedIntake(host);
+  if (state.view === "more") return renderMore(host);
   if (state.view === "board" && isOps()) return renderJobBoard(host);
   if (state.view === "tasks") return renderTasks(host);
   if (state.view === "expenses") return renderWorkerLedger(host);
@@ -2165,7 +2175,8 @@ function startIntake(preselectedCustomerId = "") {
 
 function createIntakeDraft(customerId = "") {
   return {
-    customerMode: "existing",
+    customerMode: customerId ? "existing" : "new",
+    step: 0,
     customerId,
     newCustomer: { fullName: "", phone: "", email: "", address: "" },
     ownerName: "",
@@ -2268,7 +2279,51 @@ function intakeDeviceCard(device, index) {
     </div>`;
 }
 
+const intakePreviewUrls = new WeakMap();
+function localPhotoUrl(file) {
+  if (!intakePreviewUrls.has(file)) intakePreviewUrls.set(file, URL.createObjectURL(file));
+  return intakePreviewUrls.get(file);
+}
 function renderNewIntake(host) {
+  if (!isOps()) return renderDetailedIntake(host);
+  const d = state.intakeDraft ||= createIntakeDraft();
+  if (!d.devices.length) d.devices.push({mode:"new",type:"",capacity:"",problem:"",files:[]});
+  const device = d.devices[0];
+  const step = d.step || 0;
+  const titles = ["What did they bring?", "How much storage?", "What happened?", "Who owns it?"];
+  const types = [["HDD","Hard Disk Drive (HDD)"],["SSD","Solid State Drive (SSD)"],["SD card","SD Card"],["Flash drive","USB Flash Drive"],["Phone","Phone"],["Other","Other"]];
+  const symptoms = device.type.includes("HDD") ? ["Not showing","Very slow","Clicking","Asking to format","Files missing","Files won't open","Malware","Other"] : ["Not detected","Deleted files","Formatted","Corrupted","Files missing","Files won't open","Other"];
+  const selected = device.symptoms || [];
+  const chips = (items,field) => `<div class="choice-grid">${items.map(i => { const [label,value] = Array.isArray(i)?i:[i,i]; return `<button class="choice ${device[field]===value?"selected":""}" data-choice="${esc(value)}" data-field="${field}">${esc(label)}</button>`; }).join("")}</div>`;
+  let body = "";
+  if (step===0) body=chips(types,"type");
+  if (step===1) body=chips(["32GB","64GB","128GB","256GB","500GB","1TB","2TB"],"capacity") + `<label class="field"><span>Other capacity</span><input id="customCapacity" value="${esc(device.capacity)}" placeholder="e.g. 50GB or Unknown"></label>`;
+  if (step===2) body=`<div class="choice-grid">${symptoms.map(x=>`<button class="choice ${selected.includes(x)?"selected":""}" data-symptom="${esc(x)}" aria-pressed="${selected.includes(x)}">${esc(x)}</button>`).join("")}</div><label class="field"><span>Anything else? (optional)</span><input id="symptomNote" value="${esc(device.symptomNote||"")}"></label>`;
+  if (step===3) body=`<div class="segmented"><button data-owner-mode="new" class="${d.customerMode==='new'?'active':''}">New client</button><button data-owner-mode="existing" class="${d.customerMode==='existing'?'active':''}">Returning client</button></div>${d.customerMode==='existing'?`<label class="field"><span>Client</span><select id="quickCustomer"><option value="">Choose client</option>${values(state.data.customers).filter(activeRecord).map(c=>`<option value="${esc(c.key)}" ${d.customerId===c.key?'selected':''}>${esc(c.fullName)} · ${esc(c.phone)}</option>`).join("")}</select></label>`:`${intakeField("Phone number","newCustomer.phone",d.newCustomer.phone,"tel")}${intakeField("Name (optional)","newCustomer.fullName",d.newCustomer.fullName)}`}<div class="photo-strip">${device.files.map((f,i)=>`<div><img src="${localPhotoUrl(f)}" alt="Device photo ${i+1}"><button class="ghost" data-remove-photo="${i}" aria-label="Remove photo ${i+1}">Remove</button></div>`).join("")}</div><label class="button secondary">${icon("camera",18)} Take photo<input type="file" class="file-input-hidden" accept="image/*" capture="environment" id="quickCamera"></label> <label class="button secondary">Add photos<input type="file" class="file-input-hidden" accept="image/*" multiple id="quickPhotos"></label>`;
+  host.innerHTML=`<div class="intake-screen"><button class="ghost" id="quickBack">${icon("back",16)} ${step?'Back':'Cases'}</button><span class="eyebrow">${step+1} of 4</span><div class="step-track">${titles.map((_,i)=>`<span class="${i<=step?'filled':''}"></span>`).join("")}</div><h1>${titles[step]}</h1>${body}<button class="primary full" id="quickNext">${step===3?'Create case':'Continue'}</button><button class="ghost full" id="detailedIntake">More devices / detailed intake</button></div>`;
+  host.querySelectorAll('[data-choice]').forEach(b=>b.onclick=()=>{device[b.dataset.field]=b.dataset.choice;renderCurrentView();});
+  host.querySelectorAll('[data-symptom]').forEach(b=>b.onclick=()=>{const x=b.dataset.symptom;device.symptoms=selected.includes(x)?selected.filter(y=>y!==x):[...selected,x];renderCurrentView();});
+  host.querySelector('#customCapacity')?.addEventListener('input',e=>device.capacity=e.target.value);
+  host.querySelector('#symptomNote')?.addEventListener('input',e=>device.symptomNote=e.target.value);
+  host.querySelectorAll('[data-intake-field]').forEach(el=>el.oninput=()=>setNested(d,el.dataset.intakeField,el.value));
+  host.querySelectorAll('[data-owner-mode]').forEach(b=>b.onclick=()=>{d.customerMode=b.dataset.ownerMode;renderCurrentView();});
+  host.querySelector('#quickCustomer')?.addEventListener('change',e=>d.customerId=e.target.value);
+  ['quickCamera','quickPhotos'].forEach(id=>host.querySelector('#'+id)?.addEventListener('change',e=>{device.files.push(...e.target.files);renderCurrentView();}));
+  host.querySelectorAll('[data-remove-photo]').forEach(b=>b.onclick=()=>{const f=device.files.splice(Number(b.dataset.removePhoto),1)[0];URL.revokeObjectURL(localPhotoUrl(f));intakePreviewUrls.delete(f);renderCurrentView();});
+  host.querySelector('#quickBack').onclick=()=>{if(step){d.step--;renderCurrentView();}else navigate('jobs');};
+  host.querySelector('#detailedIntake').onclick=()=>navigate('detailed-intake');
+  host.querySelector('#quickNext').onclick=()=>{
+    if(step===0&&!device.type)return toast('Choose a device.','error');
+    if(step===1&&!device.capacity.trim())return toast('Choose or enter the capacity.','error');
+    if(step===2){if(!selected.length)return toast('Choose a symptom.','error');device.problem=[...selected,device.symptomNote||''].filter(Boolean).join(' · ');}
+    if(step<3){d.step++;renderCurrentView();return;}
+    if(d.customerMode==='new'&&!d.newCustomer.phone.trim())return toast('Enter a phone number.','error');
+    if(d.customerMode==='new'&&!d.newCustomer.fullName.trim())d.newCustomer.fullName=d.newCustomer.phone.trim();
+    host.querySelector('#quickNext').id='saveIntake';saveIntake();
+  };
+}
+
+function renderDetailedIntake(host) {
   if (!isOps()) {
     host.innerHTML = emptyState("shield", "Operations access required", "Your role cannot create recovery jobs.");
     return;
@@ -2569,6 +2624,7 @@ async function saveIntake() {
           condition: draftDevice.conditionAtIntake || "",
           previousAttempt: draftDevice.previousAttempt || "No",
           problem: draftDevice.problem || "",
+          symptoms: draftDevice.symptoms || [],
           requestedData: draftDevice.requestedData || "",
           testRecord: Boolean(customer.testRecord),
           createdAt: now(),
@@ -2943,6 +2999,51 @@ function requestSubmittedEditReason(job) {
 }
 
 function renderJobDetail(host) {
+  renderLegacyJobDetail(host);
+  const job = jobByKey(state.selectedJobKey);
+  if (!job) return;
+  const room = state.caseRoom || "overview";
+  const labels = {overview:"Overview", recovery:"Recovery", money:"Money", files:"Files", activity:"Activity"};
+  host.classList.add("case-rooms");
+  host.querySelectorAll(':scope > .page-head, :scope > .grid.four').forEach(el=>el.hidden=true);
+  host.querySelectorAll('section.panel').forEach(panel=>{
+    const title=panel.querySelector('h2')?.textContent.trim();
+    const group={"Intake checkpoints":"recovery","People & authority":"activity","Job controls":"recovery","Devices":"recovery","Payments":"money","Tasks":"recovery","Documents":"files","Attachments":"files"}[title];
+    if(group)panel.hidden=group!==room;
+  });
+  host.querySelectorAll(':scope > .grid.two').forEach(el=>el.classList.add('room-sections'));
+  const customer=jobCustomer(job);
+  const header=document.createElement('div');header.className='case-room-header';
+  header.innerHTML=`<button class="ghost" id="roomBack">${icon("back",16)} ${room==='overview'?'Cases':'Overview'}</button><span class="eyebrow">${esc(job.jobId||job.key)}</span><h1>${esc(room==='overview'?jobDisplayName(job):labels[room])}</h1>${room==='overview'?`<p>${esc(jobDeviceSummary(job))}</p>${statusPill(job.status)}<div class="head-actions"><button class="primary" data-room="recovery">Update recovery</button>${canControlJob(job) ? `<button class="secondary" id="roomPhoto">Add photo</button>` : ""}${customer?.phone?`<a class="button secondary" href="tel:${esc(normalizePhone(customer.phone))}">Call</a>`:''}</div><div class="room-list">${Object.entries(labels).filter(([k])=>k!=='overview').map(([k,v])=>`<button class="secondary" data-room="${k}">${v} ${icon("chevron",16)}</button>`).join('')}</div>`:''}`;
+  host.prepend(header);
+  header.querySelector('#roomBack').onclick=()=>{if(room==='overview')navigate('jobs');else{state.caseRoom='overview';renderCurrentView();}};
+  header.querySelectorAll('[data-room]').forEach(b=>b.onclick=()=>{state.caseRoom=b.dataset.room;renderCurrentView();window.scrollTo(0,0);});
+  header.querySelector('#roomPhoto')?.addEventListener('click',()=>openAttachmentModal(job));
+  if(room==='overview') {
+    const photos=values(state.data.attachments?.[job.key]||{}).filter(a=>a.contentType?.startsWith('image/')).slice(0,3);
+    if(photos.length) {
+      const strip=document.createElement('div');strip.innerHTML=renderAttachments(photos,job);header.insertBefore(strip,header.querySelector('.head-actions'));
+      strip.querySelectorAll('[data-attachment-preview]').forEach(b=>b.onclick=()=>previewAttachment(job.key,b.dataset.attachmentPreview));
+    }
+  }
+  hydrateAttachmentThumbnails(host, job);
+
+  if(room==='money') {
+    const actions=document.createElement('div');actions.className='panel';actions.innerHTML=`<h2>Balance</h2><h1>${formatMoney(outstandingForJob(job))}</h1><button class="secondary" id="roomInvoice">Invoice</button>`;host.append(actions);
+    actions.querySelector('button').onclick=()=>generateDocument(job,'invoice');
+  }
+  if(room==='activity') {
+    const management=document.createElement('div');management.className='head-actions';
+    for(const id of ['jobArchiveBtn','markJobTestBtn']) {
+      const button=host.querySelector('#'+id);if(button)management.append(button);
+    }
+    header.append(management);
+    const events=values(state.data.communications?.[job.customerId]||{}).filter(e=>e.jobKey===job.key).sort((a,b)=>b.createdAt-a.createdAt);
+    const section=document.createElement('section');section.className='panel';section.innerHTML=`<h2>Communication history</h2>${events.map(e=>`<div class="detail-tile"><strong>${esc(e.milestone||e.type)}</strong><p>${esc(e.deliveryStatus||'Recorded')} · ${formatDate(e.createdAt,true)}</p></div>`).join('')||'<p>No messages recorded.</p>'}`;host.append(section);
+  }
+}
+
+function renderLegacyJobDetail(host) {
   const job = jobByKey(state.selectedJobKey);
 
   if (!job) {
@@ -3734,6 +3835,19 @@ function openDocumentRecord(documentId, fallbackJob = null) {
   });
 }
 
+async function hydrateAttachmentThumbnails(host, job) {
+  const attachments=state.data.attachments?.[job.key]||{};
+  for(const button of host.querySelectorAll('[data-attachment-preview]')) {
+    const attachment=attachments[button.dataset.attachmentPreview];
+    if(!attachment?.contentType?.startsWith('image/') || attachment.thumbnailUrl || !attachment.storagePath)continue;
+    try {
+      const url=await getDownloadURL(storageRef(storage,attachment.storagePath));
+      if(!button.isConnected)continue;
+      const image=document.createElement('img');image.className='attachment-thumb';image.src=url;image.alt=attachment.fileName||'Device photo';image.loading='lazy';button.querySelector('.attachment-icon')?.replaceChildren(image);
+    } catch { /* Keep the attachment available for retry through its preview action. */ }
+  }
+}
+
 function renderAttachments(attachments, job) {
   if (!attachments.length) {
     return emptyState("image", "No attachments yet", "Device photos and signed paperwork will appear here.");
@@ -3743,7 +3857,7 @@ function renderAttachments(attachments, job) {
     .sort((a,b)=>(b.createdAt||0)-(a.createdAt||0))
     .map(attachment => `
       <button class="attachment-card" data-attachment-preview="${attachment.key}">
-        <span class="attachment-icon">${icon(attachment.contentType === "application/pdf" ? "file" : "image",19)}</span>
+        <span class="attachment-icon">${attachment.thumbnailUrl ? `<img class="attachment-thumb" src="${esc(attachment.thumbnailUrl)}" alt="${esc(attachment.fileName || "Device photo")}" loading="lazy">` : icon(attachment.contentType === "application/pdf" ? "file" : "image",19)}</span>
         <div>
           <strong>${esc(attachment.fileName || attachment.category || "Attachment")}</strong>
           <span>${esc(attachment.category || "")} · ${attachment.clientVisible ? "Client-visible" : "Staff only"} · ${formatDate(attachment.createdAt)}</span>
@@ -3842,13 +3956,12 @@ async function loadImageForCompression(file) {
   });
 }
 
-async function compressImage(file) {
+async function compressImage(file, maxDimension = 1800, force = false) {
   if (!file.type.startsWith("image/")) return file;
-  if (file.size < 900 * 1024) return file;
+  if (!force && file.size < 900 * 1024) return file;
 
   const loaded = await loadImageForCompression(file);
   try {
-    const maxDimension = 1800;
     const ratio = Math.min(1, maxDimension / Math.max(loaded.width, loaded.height));
     const width = Math.max(1, Math.round(loaded.width * ratio));
     const height = Math.max(1, Math.round(loaded.height * ratio));
@@ -3920,6 +4033,16 @@ async function uploadFilesForJob({
 
       await uploadTask(task);
 
+      let thumbnailUrl = "";
+      if (file.type.startsWith("image/")) {
+        const thumbnail = await compressImage(file, 256, true);
+        const thumbnailRef = storageRef(storage, path + "-thumbnail.jpg");
+        await uploadTask(uploadBytesResumable(thumbnailRef, thumbnail, {
+          contentType: thumbnail.type,
+          customMetadata: { clientVisible: String(Boolean(clientVisible)), customerId, jobId: job.jobId || jobKey, category, deviceId }
+        }));
+        thumbnailUrl = await getDownloadURL(thumbnailRef);
+      }
       const attachmentRef = push(ref(db, `attachments/${jobKey}`));
       const attachmentId = attachmentRef.key;
 
@@ -3931,6 +4054,8 @@ async function uploadFilesForJob({
         deviceId: deviceId || "",
         category,
         storagePath: path,
+        thumbnailUrl,
+        thumbnailPath: thumbnailUrl ? path + "-thumbnail.jpg" : "",
         fileName: file.name,
         contentType: file.type,
         size: file.size,
@@ -5009,7 +5134,7 @@ async function deleteTestDataBundle(bundle){
 function renderSettings(host) {
   const c = company();
   const legacy = values(state.data.jobs).filter(job => !job.customerId);
-  const theme = localStorage.getItem("rd-theme") || "system";
+  const theme = localStorage.getItem("rd-theme") || "light";
 
   host.innerHTML = `
     <div class="page-head">
@@ -5483,7 +5608,7 @@ function renderCustomerPortal() {
 
             ${attachments.length ? `<div class="attachment-grid">${attachments.map(attachment=>`
               <button class="attachment-card" data-portal-attachment="${attachment.attachmentId}" data-portal-job="${attachment.jobKey}">
-                <span class="attachment-icon">${icon(attachment.contentType==="application/pdf"?"file":"image",19)}</span>
+                <span class="attachment-icon">${attachment.thumbnailUrl ? `<img class="attachment-thumb" src="${esc(attachment.thumbnailUrl)}" alt="${esc(attachment.fileName || "Device photo")}" loading="lazy">` : icon(attachment.contentType==="application/pdf"?"file":"image",19)}</span>
                 <div>
                   <strong>${esc(attachment.fileName||"Signed document")}</strong>
                   <span>${formatDate(attachment.createdAt)}</span>
