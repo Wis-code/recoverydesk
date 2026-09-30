@@ -1313,7 +1313,8 @@ function notifyDeskReminders(force = false) {
 setInterval(() => notifyDeskReminders(), 60000);
 
 function renderMore(host) {
-  host.innerHTML = `<section class="panel"><h2>Profile & appearance</h2><button class="secondary" data-nav="settings">${avatarMarkup(profileDisplay(),state.staff)} Edit profile & photo</button><div class="head-actions"><button class="secondary" data-theme-choice="light">Light</button><button class="secondary" data-theme-choice="dark">Dark</button><button class="ghost" data-theme-choice="system">Follow device</button><button class="ghost" id="resetAppearance">Reset appearance</button></div></section><div class="page-head"><h1>More</h1></div><div class="room-list">${workspaceItems().filter(i => !["dashboard", "customers", "jobs"].includes(i[0])).map(i => navButton(i)).join("")}</div>`;
+  host.innerHTML = `<section class="panel"><h2>Profile & appearance</h2><button class="primary" id="moreNotifications">Notifications</button><button class="secondary" data-nav="settings">${avatarMarkup(profileDisplay(),state.staff)} Edit profile & photo</button><div class="head-actions"><button class="secondary" data-theme-choice="light">Light</button><button class="secondary" data-theme-choice="dark">Dark</button><button class="ghost" data-theme-choice="system">Follow device</button><button class="ghost" id="resetAppearance">Reset appearance</button></div></section><div class="page-head"><h1>More</h1></div><div class="room-list">${workspaceItems().filter(i => !["dashboard", "customers", "jobs"].includes(i[0])).map(i => navButton(i)).join("")}</div>`;
+  host.querySelector("#moreNotifications").onclick = openNotificationSettings;
   host.querySelectorAll("[data-nav]").forEach(b => b.onclick = () => navigate(b.dataset.nav));
   bindAppearanceShortcuts(host);
 }
@@ -5221,10 +5222,15 @@ function renderSettings(host) {
     <div class="page-head">
       <div>
         <span class="eyebrow">Preferences & system</span>
-        <h1>Settings</h1><button class="secondary" id="openNotifications">Notifications</button>
+        <h1>Settings</h1>
         <p>Your display identity is separate from the real name kept underneath.</p>
       </div>
     </div>
+
+    <section class="panel form-section" style="margin-bottom:14px">
+      <div class="panel-head"><div><h2>Notifications</h2><p>Case updates and task alerts on this device.</p></div></div>
+      <div id="notificationControls"></div>
+    </section>
 
     <div class="grid two">
       <section class="panel form-section">
@@ -5392,7 +5398,7 @@ function renderSettings(host) {
       render();toast('Profile picture updated.','success');
     } catch(error) { toast(`Photo upload failed: ${error.code||'Please retry after Storage rules are deployed.'}`,'error'); }
   };
-  document.getElementById("openNotifications").onclick = openNotificationSettings;
+  mountNotifications(document.getElementById("notificationControls"));
   document.getElementById("saveProfileDisplay").onclick = async () => {
     const name = document.getElementById("profileDisplayName").value.trim();
     if (!name) return;
