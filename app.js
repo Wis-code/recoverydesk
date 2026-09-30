@@ -2,7 +2,7 @@
 import {
   auth, db, firestore, storage, googleProvider, BOOTSTRAP_ADMIN_UID,
   onAuthStateChanged, signInWithEmailAndPassword, createUserWithEmailAndPassword,
-  sendEmailVerification, sendPasswordResetEmail, updatePassword, EmailAuthProvider, reauthenticateWithCredential, linkWithCredential, signInWithPopup, signInWithRedirect, getRedirectResult, signOut,
+  sendEmailVerification, sendPasswordResetEmail, updatePassword, updateProfile, EmailAuthProvider, reauthenticateWithCredential, linkWithCredential, signInWithPopup, signInWithRedirect, getRedirectResult, signOut,
   ref, get, set, update, remove, push, onValue, runTransaction,
   doc, getDoc, setDoc, deleteDoc,
   storageRef, uploadBytesResumable, getDownloadURL, deleteObject
@@ -133,6 +133,7 @@ function profileDisplay(profile = state.staff) {
 
 function profilePhotoUrl(profile = state.staff) {
   return (
+    (profile === state.staff ? state.user?.photoURL : "") ||
     profile?.photoURL ||
     profile?.photoUrl ||
     profile?.avatarUrl ||
@@ -1257,8 +1258,9 @@ function navItems() {
 }
 
 function renderMore(host) {
-  host.innerHTML = `<div class="page-head"><h1>More</h1></div><div class="room-list">${workspaceItems().filter(i => !["dashboard", "customers", "jobs"].includes(i[0])).map(i => navButton(i)).join("")}</div>`;
+  host.innerHTML = `<section class="panel"><h2>Profile & appearance</h2><button class="secondary" data-nav="settings">${avatarMarkup(profileDisplay(),state.staff)} Edit profile & photo</button><div class="head-actions"><button class="secondary" data-theme-choice="light">Light</button><button class="secondary" data-theme-choice="dark">Dark</button><button class="ghost" data-theme-choice="system">Follow device</button><button class="ghost" id="resetAppearance">Reset appearance</button></div></section><div class="page-head"><h1>More</h1></div><div class="room-list">${workspaceItems().filter(i => !["dashboard", "customers", "jobs"].includes(i[0])).map(i => navButton(i)).join("")}</div>`;
   host.querySelectorAll("[data-nav]").forEach(b => b.onclick = () => navigate(b.dataset.nav));
+  bindAppearanceShortcuts(host);
 }
 
 function navButton(item, mobile = false) {
@@ -1333,6 +1335,8 @@ function renderStaffApp() {
           <div class="topbar-right">
             <span class="online-dot ${state.services.online ? "" : "offline"}" data-online-dot></span>
             <span class="tiny muted" data-online-label>${state.services.online ? "Online" : "Offline"}</span>
+            <button class="ghost" data-action="toggle-theme" aria-label="Switch light or dark mode">${document.documentElement.dataset.theme === "dark" ? "Light" : "Dark"}</button>
+            <button class="ghost" data-nav="settings" aria-label="Edit profile and appearance">${avatarMarkup(profileDisplay(),state.staff)}</button>
             ${isOps() ? `<button class="primary" data-action="new-intake">${icon("plus", 17)} <span class="desktop-title">New intake</span></button>` : ""}
           </div>
         </header>
@@ -1350,7 +1354,12 @@ function renderStaffApp() {
   setTimeout(() => maybeRunTabTraining(state.view), 20);
 }
 
+function bindAppearanceShortcuts(host) {
+  host.querySelectorAll('[data-theme-choice]').forEach(b=>b.onclick=()=>{localStorage.setItem('rd-theme',b.dataset.themeChoice);applyTheme();render();});
+  host.querySelector('#resetAppearance')?.addEventListener('click',()=>{localStorage.setItem('rd-theme','light');applyTheme();render();toast('Appearance reset to light mode. Records are unchanged.','success');});
+}
 function bindShellEvents() {
+  document.querySelector('[data-action="toggle-theme"]')?.addEventListener('click',()=>{localStorage.setItem('rd-theme',document.documentElement.dataset.theme==='dark'?'light':'dark');applyTheme();render();});
   document.querySelectorAll("[data-nav]").forEach(button => {
     button.onclick = () => {
       const view = button.dataset.nav;
@@ -4948,6 +4957,7 @@ function openStaffEditModal(profile) {
   const body = `
     <form id="staffEditForm">
       <div class="form-grid">
+        <label class="button secondary">${icon("camera",17)} Change profile picture<input class="file-input-hidden" type="file" id="profilePhotoInput" accept="image/*"></label>
         <label class="field"><span>Real name</span><input name="realName" value="${esc(profile.realName || profile.name || "")}" required></label>
         <label class="field"><span>Display name</span><input name="displayName" value="${esc(profile.displayName || profile.realName || profile.name || "")}" required></label>
         <label class="field"><span>Job title</span><input name="jobTitle" value="${esc(profile.jobTitle || "")}"></label>
@@ -5170,9 +5180,8 @@ function renderSettings(host) {
           </select>
         </label>
 
-        <div class="notice info">
-          Status colors use green shades for forward progress, while amber/red are reserved for attention and blocked work. Labels and icons always accompany color.
-        </div>
+        <button class="secondary" id="resetAppearance">Reset appearance</button>
+        <p class="tiny muted">Restores light mode on this device. Your records stay unchanged.</p>
       </section>
     </div>
 
@@ -5271,6 +5280,22 @@ function renderSettings(host) {
     ` : ""}
   `;
 
+  bindAppearanceShortcuts(host);
+  document.getElementById('profilePhotoInput').onchange = async event => {
+    const file=event.target.files?.[0];if(!file)return;
+    if(!file.type.startsWith('image/'))return toast('Choose an image.','error');
+    try {
+      toast('Uploading profile picture…');
+      const photo=await compressImage(file,256,true);
+      const target=storageRef(storage,`profiles/${state.user.uid}/avatar.jpg`);
+      await uploadTask(uploadBytesResumable(target,photo,{contentType:'image/jpeg'}));
+      const url=await getDownloadURL(target);
+      await updateProfile(state.user,{photoURL:url});
+      // The new photo belongs to this Firebase Auth account; it does not change the role record.
+      state.staff={...state.staff,photoURL:url};
+      render();toast('Profile picture updated.','success');
+    } catch(error) { toast(`Photo upload failed: ${error.code||'Please retry after Storage rules are deployed.'}`,'error'); }
+  };
   document.getElementById("saveProfileDisplay").onclick = async () => {
     const name = document.getElementById("profileDisplayName").value.trim();
     if (!name) return;
@@ -5331,6 +5356,7 @@ function renderSettings(host) {
   document.getElementById("themePreference").onchange = event => {
     localStorage.setItem("rd-theme", event.target.value);
     applyTheme();
+    render();
     toast("Theme preference saved.", "success");
   };
 

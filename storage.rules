@@ -34,6 +34,13 @@ service firebase.storage {
         firestore.get(/databases/(default)/documents/customerAccess/$(request.auth.uid)).data.customerId == customerId;
     }
 
+    match /profiles/{uid}/{fileName} {
+      allow read: if signedIn() && (request.auth.uid == uid || isStaff());
+      allow create, update: if signedIn() && request.auth.uid == uid
+        && request.resource.size < 512 * 1024
+        && request.resource.contentType == "image/jpeg";
+    }
+
     match /jobs/{customerId}/{jobId}/{allPaths=**} {
       allow read: if isStaff() ||
         (isClientFor(customerId) && resource.metadata.clientVisible == "true");
