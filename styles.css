@@ -1468,7 +1468,7 @@ td.right, th.right { text-align: right; }
 .photo-strip > div { width: 92px; }
 .photo-strip img { width: 92px; height: 92px; object-fit: cover; border-radius: 14px; }
 .room-list { display: grid; gap: 12px; margin-top: 24px; }
-.room-list button { display: flex; justify-content: space-between; align-items: center; padding: 20px; min-height: 60px; border-radius: 16px; }
+.room-list button { display: flex; justify-content: space-between; align-items: center; padding: 20px; min-height: 60px; border-radius: 16px; background: var(--surface); color: var(--text); border: 1px solid var(--line); }
 .case-room-header { display: grid; gap: 12px; margin-bottom: 24px; max-width: 720px; }
 .case-room-header h1 { margin: 0; }
 .case-rooms > .room-sections { display: contents; }

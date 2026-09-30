@@ -10,6 +10,7 @@ import {
 
 import { icon } from "./icons.js";
 import { formatMoney, formatDate, openPrintableDocument } from "./documents.js";
+import { buildFollowups, customerMessage, whatsappNumber } from "./reminders.js";
 
 const DEFAULT_COMPANY = {
   name: "WISCODE INNOVATIONS LTD",
@@ -1241,6 +1242,7 @@ function workspaceItems() {
   ];
 
   if (isOps()) items.push(["board", "jobs", "Job Board", availablePostCount() ? String(availablePostCount()) : ""]);
+  if (isOps()) items.push(["reminders", "clock", "Follow-ups", String(followupQueue().length || "")]);
   items.push(["tasks", "tasks", "Tasks", overdueTaskCount() ? String(overdueTaskCount()) : ""]);
   items.push(["expenses", "receipt", state.staff?.role === "worker" ? "My Expenses" : "Expenses", pendingLedgerCount() ? String(pendingLedgerCount()) : ""]);
 
@@ -1256,6 +1258,58 @@ function navItems() {
     ...(isOps() ? [["new-intake", "plus", "New case", ""]] : []),
     ["customers", "customers", "Clients", ""], ["more", "menu", "More", ""]];
 }
+
+function followupQueue() {
+  return buildFollowups(dashboardJobsScope(values(state.data.jobs)), state.data.communications, now());
+}
+
+function renderFollowups(host) {
+  const items = followupQueue();
+  host.innerHTML = `<div class="page-head"><div><h1>Follow-ups</h1><p>${items.length} waiting · Collection reminders repeat after 7 days.</p></div><button class="secondary" id="enableDeskReminders">Enable desk notifications</button></div><p class="tiny muted">Notifications work while this app is open. Review and send customer messages yourself, then mark them contacted.</p>${items.length ? items.map((item,index) => {
+    const customer = jobCustomer(item.job);
+    const text = customerMessage(item, customer, company().name);
+    const phone = whatsappNumber(customer?.phone);
+    return `<section class="panel"><div class="panel-head"><div><h2>${esc(item.title)}</h2><p>${esc(item.job.jobId || item.job.key)} · ${esc(customer?.fullName || 'Client')}${item.kind === 'collection' ? ` · ${item.days === null ? 'Ready date unknown' : `${item.days} days waiting`}` : ''}</p></div>${item.overdue ? '<span class="status-pill tone-warning">Overdue</span>' : ''}</div><p>${esc(text)}</p><div class="head-actions"><button class="secondary" data-open-followup="${index}">Open case</button>${phone ? `<a class="button secondary" target="_blank" rel="noopener noreferrer" href="https://wa.me/${encodeURIComponent(phone)}?text=${encodeURIComponent(text)}">Review in WhatsApp</a><a class="button secondary" href="tel:${esc(normalizePhone(customer.phone))}">Call</a>` : '<span class="muted">No customer phone</span>'}<button class="primary" data-contacted="${index}">Mark contacted</button></div></section>`;
+  }).join('') : '<section class="panel"><h2>All caught up</h2><p>No device acknowledgements or collection follow-ups waiting.</p></section>'}`;
+  host.querySelectorAll('[data-open-followup]').forEach(button => button.onclick = () => navigate('job-detail', {jobKey: items[Number(button.dataset.openFollowup)].job.key}));
+  host.querySelectorAll('[data-contacted]').forEach(button => button.onclick = async () => {
+    const item = items[Number(button.dataset.contacted)];
+    if (!canControlJob(item.job)) return toast('This case is read-only for your role.', 'error');
+    const reason = await managementReasonModal({title:'Confirm customer contacted',subtitle:item.job.jobId || item.job.key,warning:'Only mark this after you have actually contacted the customer.',label:'Contact method / note *',confirmText:'Save contact'});
+    if (!reason) return;
+    try {
+      await set(push(ref(db, `communications/${item.job.customerId}`)), {type:item.kind === 'received' ? 'Device received notice' : 'Collection reminder',jobKey:item.job.key,jobId:item.job.jobId || item.job.key,note:reason,createdAt:now(),createdBy:state.user.uid,createdByName:profileDisplay()});
+      toast('Contact recorded.', 'success'); renderCurrentView();
+    } catch(error) { console.error(error); toast('Contact could not be saved.', 'error'); }
+  });
+  const notificationButton = document.getElementById('enableDeskReminders');
+  notificationButton.textContent = localStorage.getItem('rd-desk-reminders') === 'on' ? 'Disable desk notifications' : 'Enable desk notifications';
+  notificationButton.onclick = async () => {
+    if (localStorage.getItem('rd-desk-reminders') === 'on') {
+      localStorage.removeItem('rd-desk-reminders');
+      renderCurrentView(); return toast('Desk notifications disabled.');
+    }
+    if (!('Notification' in window)) return toast('This browser does not support desk notifications.', 'error');
+    const permission = await Notification.requestPermission();
+    if (permission !== 'granted') return toast('Notifications were not enabled. Follow-ups remain available here.');
+    localStorage.setItem('rd-desk-reminders','on'); notifyDeskReminders(true);
+    renderCurrentView();
+    toast('Desk reminders enabled while the app is open.', 'success');
+  };
+}
+
+function notifyDeskReminders(force = false) {
+  if (!state.staff || !isOps() || !('Notification' in window) || Notification.permission !== 'granted' || localStorage.getItem('rd-desk-reminders') !== 'on') return;
+  const count = followupQueue().length + tasksForCurrentUser().filter(task => taskDueState(task) === 'overdue').length;
+  const key = `rd-reminder-${state.user.uid}-${new Date().toLocaleDateString()}`;
+  if (!count || (!force && localStorage.getItem(key))) return;
+  try {
+    const notification = new Notification('RecoveryDesk follow-ups', {body:`${count} customer follow-ups or overdue tasks need attention.`,tag:'recoverydesk-followups',icon:'./icon-192.png'});
+    notification.onclick = () => {window.focus(); navigate('reminders'); notification.close();};
+    localStorage.setItem(key,'shown');
+  } catch { /* Follow-up queue remains usable where desktop notifications are unsupported. */ }
+}
+setInterval(() => notifyDeskReminders(), 60000);
 
 function renderMore(host) {
   host.innerHTML = `<section class="panel"><h2>Profile & appearance</h2><button class="secondary" data-nav="settings">${avatarMarkup(profileDisplay(),state.staff)} Edit profile & photo</button><div class="head-actions"><button class="secondary" data-theme-choice="light">Light</button><button class="secondary" data-theme-choice="dark">Dark</button><button class="ghost" data-theme-choice="system">Follow device</button><button class="ghost" id="resetAppearance">Reset appearance</button></div></section><div class="page-head"><h1>More</h1></div><div class="room-list">${workspaceItems().filter(i => !["dashboard", "customers", "jobs"].includes(i[0])).map(i => navButton(i)).join("")}</div>`;
@@ -1291,7 +1345,8 @@ function currentViewTitle() {
     finance: "Finance",
     staff: "Staff",
     audit: "Audit",
-    settings: "Settings"
+    settings: "Settings",
+    reminders: "Follow-ups"
   };
   return map[state.view] || "RecoveryDesk";
 }
@@ -1409,6 +1464,7 @@ function renderCurrentView() {
   if (state.view === "new-intake") return renderNewIntake(host);
   if (state.view === "detailed-intake") return renderDetailedIntake(host);
   if (state.view === "more") return renderMore(host);
+  if (state.view === "reminders" && isOps()) return renderFollowups(host);
   if (state.view === "board" && isOps()) return renderJobBoard(host);
   if (state.view === "tasks") return renderTasks(host);
   if (state.view === "expenses") return renderWorkerLedger(host);
@@ -3545,6 +3601,7 @@ async function saveJobControls(job) {
     };
 
     const previousStatus = job.status;
+    if (previousStatus !== patch.status) patch.collectionReadyAt = patch.status === 'Ready for Collection' ? now() : null;
     const assignmentChanged = isAdmin() && (job.assignedTo || "") !== (patch.assignedTo || "");
     if (assignmentChanged) {
       patch.assignedAt = now();

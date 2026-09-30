@@ -1,4 +1,4 @@
-const CACHE = "recoverydesk-mobile-preview-5";
+const CACHE = "recoverydesk-mobile-preview-6";
 const SHELL = [
   "./",
   "./index.html",
@@ -9,6 +9,7 @@ const SHELL = [
   "./firebase.js",
   "./icons.js",
   "./documents.js",
+  "./reminders.js",
   "./manifest.webmanifest",
   "./logo.png",
   "./icon-192.png",
